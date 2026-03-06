@@ -260,10 +260,9 @@ export function formatMonthFolder(date: Date): string {
 }
 
 export function formatTimestampToken(date: Date): string {
-  const month = MONTH_SHORT_UPPER[date.getMonth()] ?? "UNK";
   return (
     `${date.getFullYear()}` +
-    `${month}` +
+    `${String(date.getMonth() + 1).padStart(2, "0")}` +
     `${String(date.getDate()).padStart(2, "0")}` +
     `-${String(date.getHours()).padStart(2, "0")}` +
     `${String(date.getMinutes()).padStart(2, "0")}` +
@@ -303,21 +302,6 @@ export function selectStorageTier(
   }
   return "coldmem";
 }
-
-const MONTH_SHORT_UPPER = [
-  "JAN",
-  "FEB",
-  "MAR",
-  "APR",
-  "MAY",
-  "JUN",
-  "JUL",
-  "AUG",
-  "SEP",
-  "OCT",
-  "NOV",
-  "DEC",
-] as const;
 
 function slugify(value: string): string {
   return value

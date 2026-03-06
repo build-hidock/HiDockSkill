@@ -13,14 +13,14 @@ describe("HiDock file list parser", () => {
     const entries = [
       buildEntry({
         version: 0x00,
-        fileName: "2026Feb21-095834-Rec43.hda\u0000",
+        fileName: "20260221-095834-Rec43.hda\u0000",
         size: 64000,
         modifiedAt: Uint8Array.from([0x20, 0x26, 0x02, 0x21, 0x12, 0x14]),
         md5Seed: 1,
       }),
       buildEntry({
         version: 0x02,
-        fileName: "2026Feb21-100000-Whsp00.hda\u0000",
+        fileName: "20260221-100000-Whsp00.hda\u0000",
         size: 96044,
         modifiedAt: Uint8Array.from([0x20, 0x26, 0x02, 0x21, 0x12, 0x15]),
         md5Seed: 2,
@@ -36,7 +36,7 @@ describe("HiDock file list parser", () => {
     const parsed = parseHiDockFileListBody(body);
 
     expect(parsed.fileCount).toBe(2);
-    expect(parsed.files[0]!.fileName).toBe("2026Feb21-095834-Rec43.hda");
+    expect(parsed.files[0]!.fileName).toBe("20260221-095834-Rec43.hda");
     expect(parsed.files[0]!.estimatedDurationSeconds).toBe(8);
     expect(parsed.files[1]!.audioProfile?.codec).toBe("wav");
     expect(parsed.files[1]!.estimatedDurationSeconds).toBe(1);

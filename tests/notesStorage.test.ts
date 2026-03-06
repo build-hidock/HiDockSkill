@@ -12,7 +12,7 @@ import type { MeetingDocumentInput } from "../src/meetingStorage.js";
 
 const SAMPLE_INPUT: MeetingDocumentInput = {
   timestamp: new Date("2026-03-06T08:00:00.000Z"),
-  sourceFileName: "2026Mar06-160000-Rec01.hda",
+  sourceFileName: "20260306-160000-Rec01.hda",
   title: "Sprint Planning",
   attendee: "Alex, Sam",
   brief: "Reviewed sprint goals and prioritized API work",

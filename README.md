@@ -8,9 +8,10 @@ HiDockSkill connects to your HiDock device, fetches recordings from P1, transcri
 - Detect & list recordings from HiDock (no sudo required)
 - Transcribe using Whisper
 - Auto‑summarize meetings via LLM
-- Store results as organized Markdown files
+- Store results as organized Markdown files (new note filenames use `YYYYMMDD-HHMMSS`)
 - Selectable notes backend (`local` or `memdock`) with local fallback safety
 - Slack / OpenClaw query integration (“HiDockSkill, how many recordings on P1”)
+- Recording-date parsing remains backward compatible with legacy `YYYYMonDD-HHMMSS` source filenames
 
 ## Quick Installation
 ```bash
@@ -28,8 +29,8 @@ clawhub install seanspsong/HiDockSkill
    Expect output similar to:
    ```
    Total recordings on P1: 2
-   2026Feb21‑132825‑Rec00.hda (0.2 MB)
-   2026Feb21‑132846‑Wip00.hda (0.0 MB)
+   20260221‑132825‑Rec00.hda (0.2 MB)
+   20260221‑132846‑Wip00.hda (0.0 MB)
    ```
 4. To process recordings:
    ```bash
@@ -143,25 +144,25 @@ Resulting local folder structure:
   meetings/
     hotmem/
       YYYYMM/
-        YYYYMMMDD-HHMMSS-<title-slug>.md
+        YYYYMMDD-HHMMSS-<title-slug>.md
     warmmem/
       YYYYMM/
-        YYYYMMMDD-HHMMSS-<title-slug>.md
+        YYYYMMDD-HHMMSS-<title-slug>.md
     coldmem/
       YYYYMM/
-        YYYYMMMDD-HHMMSS-<title-slug>.md
+        YYYYMMDD-HHMMSS-<title-slug>.md
   whispers/
     hotmem/
-      YYYYMMMDD-HHMMSS.md
+      YYYYMMDD-HHMMSS.md
     warmmem/
-      YYYYMMMDD-HHMMSS.md
+      YYYYMMDD-HHMMSS.md
     coldmem/
-      YYYYMMMDD-HHMMSS.md
+      YYYYMMDD-HHMMSS.md
 ```
 
 Index behavior:
 - `meetingindex.md` and `whisperindex.md` stay at `<storage>/`
-- each `Note:` entry stores the relative path including tier folder (example: `meetings/warmmem/202602/2026FEB21-091626-weekly-sync.md`)
+- each `Note:` entry stores the relative path including tier folder (example: `meetings/warmmem/202602/20260221-091626-weekly-sync.md`)
 
 Auto-sync concurrency control:
 - watcher uses single-flight lock + debounce (default `1500ms`)

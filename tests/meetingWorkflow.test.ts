@@ -7,11 +7,11 @@ import {
 
 describe("meeting workflow helpers", () => {
   it("detects whisper files from file name", () => {
-    expect(isWhisperRecording("2025Sep22-180847-Whsp12.hda")).toBe(true);
-    expect(isWhisperRecording("2026Feb21-091626-Rec23.hda")).toBe(false);
+    expect(isWhisperRecording("20250922-180847-Whsp12.hda")).toBe(true);
+    expect(isWhisperRecording("20260221-091626-Rec23.hda")).toBe(false);
   });
 
-  it("parses month-name timestamp from HiDock filename", () => {
+  it("parses legacy month-name timestamp from HiDock filename", () => {
     const parsed = parseHiDockRecordingDate("2026Feb21-091626-Rec23.hda");
     expect(parsed).not.toBeNull();
     expect(parsed?.getFullYear()).toBe(2026);

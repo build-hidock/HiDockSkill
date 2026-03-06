@@ -23,7 +23,7 @@ describe("MeetingStorage", () => {
 
     const saved = await storage.saveMeeting({
       timestamp,
-      sourceFileName: "2026Feb21-091626-Rec23.hda",
+      sourceFileName: "20260221-091626-Rec23.hda",
       title: "Weekly product and engineering sync",
       attendee: "Alice, Bob",
       brief:
@@ -41,11 +41,11 @@ describe("MeetingStorage", () => {
     expect(indexContent).toContain("Title:");
     expect(indexContent).toContain("Attendee:");
     expect(indexContent).toContain("Brief:");
-    expect(indexContent).toContain("Source: 2026Feb21-091626-Rec23.hda");
+    expect(indexContent).toContain("Source: 20260221-091626-Rec23.hda");
     expect(indexContent).toContain(`Note: ${saved.relativeNotePath}`);
   });
 
-  it("saves whisper note with YYYYMMMDD-HHMMSS naming and whisperindex", async () => {
+  it("saves whisper note with YYYYMMDD-HHMMSS naming and whisperindex", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "hidock-whisper-"));
     const now = new Date(2026, 3, 5, 0, 0, 0);
     const storage = new MeetingStorage({ rootDir: root, now: () => now });
@@ -53,7 +53,7 @@ describe("MeetingStorage", () => {
 
     const saved = await storage.saveWhisper({
       timestamp,
-      sourceFileName: "2025Sep22-180847-Whsp12.hda",
+      sourceFileName: "20250922-180847-Whsp12.hda",
       title: "Whisper snippet",
       attendee: "Unknown",
       brief: "Condensed whisper summary line for index collection and quick glance references",
@@ -66,7 +66,7 @@ describe("MeetingStorage", () => {
 
     const whisperIndex = await fs.readFile(path.join(root, "whisperindex.md"), "utf8");
     expect(whisperIndex).toContain("Brief:");
-    expect(whisperIndex).toContain(`Source: 2025Sep22-180847-Whsp12.hda`);
+    expect(whisperIndex).toContain(`Source: 20250922-180847-Whsp12.hda`);
     expect(whisperIndex).toContain(`Note: ${saved.relativeNotePath}`);
   });
 
@@ -84,7 +84,7 @@ describe("MeetingStorage", () => {
       const warmTimestamp = new Date(2026, 2, 2, 0, 0, 0);
       const warmSaved = await storage.saveMeeting({
         timestamp: warmTimestamp,
-        sourceFileName: "2026Mar02-000000-Rec01.hda",
+        sourceFileName: "20260302-000000-Rec01.hda",
         title: "Warm Tier",
         attendee: "A, B",
         brief: "Warm tier brief",
@@ -96,7 +96,7 @@ describe("MeetingStorage", () => {
       const coldTimestamp = new Date(2026, 1, 26, 0, 0, 0);
       const coldSaved = await storage.saveWhisper({
         timestamp: coldTimestamp,
-        sourceFileName: "2026Feb26-000000-Whsp01.hda",
+        sourceFileName: "20260226-000000-Whsp01.hda",
         title: "Cold Tier",
         attendee: "Unknown",
         brief: "Cold tier brief",
@@ -117,6 +117,11 @@ describe("MeetingStorage", () => {
       }
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("formats timestamp tokens as YYYYMMDD-HHMMSS", () => {
+    const timestamp = new Date(2026, 1, 21, 18, 8, 47);
+    expect(formatTimestampToken(timestamp)).toBe("20260221-180847");
   });
 
   it("limits brief text to 14 words", () => {

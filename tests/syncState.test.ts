@@ -19,12 +19,12 @@ describe("SyncStateStore", () => {
     const completedAt = new Date("2026-03-06T00:00:00.000Z");
     await store.markRunCompleted({
       completedAt,
-      processed: [{ fileName: "2026Feb06-010203-Rec01.hda", fileSize: 12 } as never],
+      processed: [{ fileName: "20260206-010203-Rec01.hda", fileSize: 12 } as never],
     });
 
     const saved = await store.read();
     expect(saved.lastSuccessfulSyncAt).toBe(completedAt.toISOString());
-    expect(saved.processedFiles["2026Feb06-010203-Rec01.hda"]?.fileSize).toBe(12);
+    expect(saved.processedFiles["20260206-010203-Rec01.hda"]?.fileSize).toBe(12);
 
     const raw = await readFile(statePath, "utf8");
     expect(raw).toContain("lastSuccessfulSyncAt");
