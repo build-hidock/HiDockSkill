@@ -1,0 +1,30 @@
+{
+  "name": "hinotesskill",
+  "version": "1.0.0",
+  "description": "HiDock WebUSB file parser and Whisper transcription skill",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "probe:lab": "node research/protocol_lab.mjs",
+    "probe:live": "node research/hidock_live_probe.mjs",
+    "meetings:sync": "npm run build && node dist/cli/meetingsSync.js",
+    "usb:watch": "npm run build && node dist/cli/usbWatch.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "openai": "^6.22.0",
+    "usb": "^2.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,36 @@
+import { WebUSB } from "usb";
+import { HiDockClient } from "./client.js";
+import { HiDockTransportOptions, UsbDeviceLike } from "./transport.js";
+export interface HiDockUsbFilter {
+    vendorId: number;
+    productId?: number;
+}
+export interface NodeUsbDiscoveryOptions {
+    filters?: readonly HiDockUsbFilter[];
+}
+export interface HiDockPlugInEvent {
+    productName: string;
+    prompt: string;
+    device: UsbDeviceLike;
+}
+export interface HiDockConnectionMonitorOptions {
+    intervalMs?: number;
+    emitOnStartupIfConnected?: boolean;
+    discoveryOptions?: NodeUsbDiscoveryOptions;
+    findDevice?: (options?: NodeUsbDiscoveryOptions) => Promise<UsbDeviceLike>;
+    formatPrompt?: (productName: string) => string;
+    onPluggedIn?: (event: HiDockPlugInEvent) => void;
+    log?: (message: string) => void;
+}
+export interface HiDockConnectionMonitor {
+    start(): void;
+    stop(): void;
+    isRunning(): boolean;
+    pollNow(): Promise<void>;
+}
+export declare function createNodeWebUsb(): WebUSB;
+export declare function findHiDockNodeDevice(options?: NodeUsbDiscoveryOptions): Promise<UsbDeviceLike>;
+export declare function createNodeHiDockClient(transportOptions?: HiDockTransportOptions, discoveryOptions?: NodeUsbDiscoveryOptions): Promise<HiDockClient>;
+export declare function formatHiDockPluggedInPrompt(productName: string): string;
+export declare function createHiDockConnectionMonitor(options?: HiDockConnectionMonitorOptions): HiDockConnectionMonitor;
+//# sourceMappingURL=nodeUsb.d.ts.map

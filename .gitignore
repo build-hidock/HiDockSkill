@@ -1,0 +1,5 @@
+node_modules/
+meeting-storage/
+*.map
+.env
+.DS_Store
