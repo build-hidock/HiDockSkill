@@ -215,13 +215,15 @@ function compareByDateThenName(a: HiDockFileEntry, b: HiDockFileEntry): number {
   return a.fileName.localeCompare(b.fileName);
 }
 
+const DEFAULT_STORAGE_DIR = "/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes";
+
 export function parseArgs(
   argv: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): CliOptions {
   const storageDir = path.resolve(
     process.cwd(),
-    env.MEETING_STORAGE_DIR ?? "./meeting-storage",
+    env.MEETING_STORAGE_DIR ?? DEFAULT_STORAGE_DIR,
   );
   const options: CliOptions = {
     storageDir,
@@ -355,7 +357,7 @@ Usage:
   npm run meetings:sync -- [options]
 
 Options:
-  --storage <dir>        Storage root directory (default: ./meeting-storage)
+  --storage <dir>        Storage root directory (default: /Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes)
   --state-file <path>    Sync state file path (default: <storage>/.hidock-sync-state.json)
   --storage-backend <id> Storage backend: local|memdock (default: local)
   --memdock-base-url <url>      Memdock API base URL (for memdock backend)
