@@ -28,7 +28,7 @@ export interface SavedMeetingDocument {
 }
 
 export type DocumentKind = "meeting" | "whisper";
-export type StorageTier = "hot" | "warm" | "cold";
+export type StorageTier = "hotmem" | "warmmem" | "coldmem";
 
 const DEFAULT_MEETINGS_DIR = "meetings";
 const DEFAULT_WHISPERS_DIR = "whispers";
@@ -296,12 +296,12 @@ export function selectStorageTier(
   );
 
   if (normalizedAgeDays <= normalizedHotMax) {
-    return "hot";
+    return "hotmem";
   }
   if (normalizedAgeDays <= normalizedWarmMax) {
-    return "warm";
+    return "warmmem";
   }
-  return "cold";
+  return "coldmem";
 }
 
 const MONTH_SHORT_UPPER = [

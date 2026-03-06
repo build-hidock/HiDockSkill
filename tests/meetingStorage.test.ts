@@ -34,7 +34,7 @@ describe("MeetingStorage", () => {
 
     expect(saved.skipped).toBe(false);
     const monthFolder = formatMonthFolder(timestamp);
-    expect(saved.relativeNotePath.startsWith(`meetings/hot/${monthFolder}/`)).toBe(true);
+    expect(saved.relativeNotePath.startsWith(`meetings/hotmem/${monthFolder}/`)).toBe(true);
 
     const indexContent = await fs.readFile(path.join(root, "meetingindex.md"), "utf8");
     expect(indexContent).toContain("DateTime:");
@@ -62,7 +62,7 @@ describe("MeetingStorage", () => {
     });
 
     const expectedToken = formatTimestampToken(timestamp);
-    expect(saved.relativeNotePath).toBe(`whispers/warm/${expectedToken}.md`);
+    expect(saved.relativeNotePath).toBe(`whispers/warmmem/${expectedToken}.md`);
 
     const whisperIndex = await fs.readFile(path.join(root, "whisperindex.md"), "utf8");
     expect(whisperIndex).toContain("Brief:");
@@ -91,7 +91,7 @@ describe("MeetingStorage", () => {
         summary: "Warm tier summary",
         transcript: "Warm tier transcript",
       });
-      expect(warmSaved.relativeNotePath.startsWith("meetings/warm/")).toBe(true);
+      expect(warmSaved.relativeNotePath.startsWith("meetings/warmmem/")).toBe(true);
 
       const coldTimestamp = new Date(2026, 1, 26, 0, 0, 0);
       const coldSaved = await storage.saveWhisper({
@@ -103,7 +103,7 @@ describe("MeetingStorage", () => {
         summary: "Cold tier summary",
         transcript: "Cold tier transcript",
       });
-      expect(coldSaved.relativeNotePath.startsWith("whispers/cold/")).toBe(true);
+      expect(coldSaved.relativeNotePath.startsWith("whispers/coldmem/")).toBe(true);
     } finally {
       if (typeof originalHot === "string") {
         process.env[TIER_HOT_MAX_AGE_DAYS_ENV] = originalHot;
@@ -127,11 +127,11 @@ describe("MeetingStorage", () => {
     );
   });
 
-  it("classifies age into hot/warm/cold tiers", () => {
-    expect(selectStorageTier(0)).toBe("hot");
-    expect(selectStorageTier(30)).toBe("hot");
-    expect(selectStorageTier(31)).toBe("warm");
-    expect(selectStorageTier(180)).toBe("warm");
-    expect(selectStorageTier(181)).toBe("cold");
+  it("classifies age into hotmem/warmmem/coldmem tiers", () => {
+    expect(selectStorageTier(0)).toBe("hotmem");
+    expect(selectStorageTier(30)).toBe("hotmem");
+    expect(selectStorageTier(31)).toBe("warmmem");
+    expect(selectStorageTier(180)).toBe("warmmem");
+    expect(selectStorageTier(181)).toBe("coldmem");
   });
 });

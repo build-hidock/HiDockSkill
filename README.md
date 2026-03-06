@@ -122,12 +122,12 @@ Storage backend selection:
   - `MEMDOCK_WORKSPACE`, `MEMDOCK_COLLECTION`, `MEMDOCK_TIMEOUT_MS`
 - if memdock is unreachable/misconfigured, sync falls back to local storage automatically
 
-Local storage tiering (hot/warm/cold):
-- local notes are saved into `hot`, `warm`, or `cold` based on recording timestamp age
+Local storage tiering (hotmem/warmmem/coldmem):
+- local notes are saved into `hotmem`, `warmmem`, or `coldmem` based on recording timestamp age
 - tier rules (age in days, inclusive):
-  - `hot`: `ageDays <= HOT_MAX`
-  - `warm`: `HOT_MAX < ageDays <= WARM_MAX`
-  - `cold`: `ageDays > WARM_MAX`
+  - `hotmem`: `ageDays <= HOT_MAX`
+  - `warmmem`: `HOT_MAX < ageDays <= WARM_MAX`
+  - `coldmem`: `ageDays > WARM_MAX`
 - defaults:
   - `HOT_MAX=30`
   - `WARM_MAX=180`
@@ -141,27 +141,27 @@ Resulting local folder structure:
   meetingindex.md
   whisperindex.md
   meetings/
-    hot/
+    hotmem/
       YYYYMM/
         YYYYMMMDD-HHMMSS-<title-slug>.md
-    warm/
+    warmmem/
       YYYYMM/
         YYYYMMMDD-HHMMSS-<title-slug>.md
-    cold/
+    coldmem/
       YYYYMM/
         YYYYMMMDD-HHMMSS-<title-slug>.md
   whispers/
-    hot/
+    hotmem/
       YYYYMMMDD-HHMMSS.md
-    warm/
+    warmmem/
       YYYYMMMDD-HHMMSS.md
-    cold/
+    coldmem/
       YYYYMMMDD-HHMMSS.md
 ```
 
 Index behavior:
 - `meetingindex.md` and `whisperindex.md` stay at `<storage>/`
-- each `Note:` entry stores the relative path including tier folder (example: `meetings/warm/202602/2026FEB21-091626-weekly-sync.md`)
+- each `Note:` entry stores the relative path including tier folder (example: `meetings/warmmem/202602/2026FEB21-091626-weekly-sync.md`)
 
 Auto-sync concurrency control:
 - watcher uses single-flight lock + debounce (default `1500ms`)

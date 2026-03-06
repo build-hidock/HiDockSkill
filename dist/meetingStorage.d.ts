@@ -22,7 +22,7 @@ export interface SavedMeetingDocument {
     skipped: boolean;
 }
 export type DocumentKind = "meeting" | "whisper";
-export type StorageTier = "hot" | "warm" | "cold";
+export type StorageTier = "hotmem" | "warmmem" | "coldmem";
 export declare const DEFAULT_HOT_TIER_MAX_AGE_DAYS = 30;
 export declare const DEFAULT_WARM_TIER_MAX_AGE_DAYS = 180;
 export declare const TIER_HOT_MAX_AGE_DAYS_ENV = "HIDOCK_NOTES_TIER_HOT_MAX_DAYS";

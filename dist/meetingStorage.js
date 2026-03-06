@@ -180,12 +180,12 @@ export function selectStorageTier(ageDays, hotTierMaxAgeDays = DEFAULT_HOT_TIER_
     const normalizedHotMax = normalizeTierDays(hotTierMaxAgeDays, DEFAULT_HOT_TIER_MAX_AGE_DAYS);
     const normalizedWarmMax = Math.max(normalizedHotMax, normalizeTierDays(warmTierMaxAgeDays, DEFAULT_WARM_TIER_MAX_AGE_DAYS));
     if (normalizedAgeDays <= normalizedHotMax) {
-        return "hot";
+        return "hotmem";
     }
     if (normalizedAgeDays <= normalizedWarmMax) {
-        return "warm";
+        return "warmmem";
     }
-    return "cold";
+    return "coldmem";
 }
 const MONTH_SHORT_UPPER = [
     "JAN",
