@@ -5,7 +5,7 @@ import { parseArgs } from "../src/cli/meetingsSync.js";
 describe("meetings sync CLI args", () => {
   it("keeps manual defaults and state file under storage", () => {
     const options = parseArgs([], {});
-    expect(options.storageDir).toContain("meeting-storage");
+    expect(options.storageDir).toContain("MeetingNotes");
     expect(options.stateFile).toContain(".hidock-sync-state.json");
     expect(options.storageBackend).toBe("local");
     expect(options.showHelp).toBe(false);

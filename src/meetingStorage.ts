@@ -5,6 +5,9 @@ export interface MeetingStorageOptions {
   rootDir: string;
   meetingsDirName?: string;
   whispersDirName?: string;
+  tierHotMaxAgeDays?: number;
+  tierWarmMaxAgeDays?: number;
+  now?: () => Date;
 }
 
 export interface MeetingDocumentInput {
@@ -25,27 +28,52 @@ export interface SavedMeetingDocument {
 }
 
 export type DocumentKind = "meeting" | "whisper";
+export type StorageTier = "hot" | "warm" | "cold";
 
 const DEFAULT_MEETINGS_DIR = "meetings";
 const DEFAULT_WHISPERS_DIR = "whispers";
+export const DEFAULT_HOT_TIER_MAX_AGE_DAYS = 30;
+export const DEFAULT_WARM_TIER_MAX_AGE_DAYS = 180;
+export const TIER_HOT_MAX_AGE_DAYS_ENV = "HIDOCK_NOTES_TIER_HOT_MAX_DAYS";
+export const TIER_WARM_MAX_AGE_DAYS_ENV = "HIDOCK_NOTES_TIER_WARM_MAX_DAYS";
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export class MeetingStorage {
   private readonly rootDir: string;
   private readonly meetingsDirName: string;
   private readonly whispersDirName: string;
+  private readonly hotTierMaxAgeDays: number;
+  private readonly warmTierMaxAgeDays: number;
+  private readonly now: () => Date;
 
   constructor(options: MeetingStorageOptions) {
     this.rootDir = options.rootDir;
     this.meetingsDirName = options.meetingsDirName ?? DEFAULT_MEETINGS_DIR;
     this.whispersDirName = options.whispersDirName ?? DEFAULT_WHISPERS_DIR;
+    this.hotTierMaxAgeDays = resolveTierThresholdDays(
+      options.tierHotMaxAgeDays,
+      parseTierDaysFromEnv(TIER_HOT_MAX_AGE_DAYS_ENV),
+      DEFAULT_HOT_TIER_MAX_AGE_DAYS,
+    );
+    this.warmTierMaxAgeDays = Math.max(
+      this.hotTierMaxAgeDays,
+      resolveTierThresholdDays(
+        options.tierWarmMaxAgeDays,
+        parseTierDaysFromEnv(TIER_WARM_MAX_AGE_DAYS_ENV),
+        DEFAULT_WARM_TIER_MAX_AGE_DAYS,
+      ),
+    );
+    this.now = options.now ?? (() => new Date());
   }
 
   async saveMeeting(input: MeetingDocumentInput): Promise<SavedMeetingDocument> {
     await this.ensureStructure();
+    const tier = this.selectTier(input.timestamp);
 
     const monthDir = path.join(
       this.rootDir,
       this.meetingsDirName,
+      tier,
       formatMonthFolder(input.timestamp),
     );
     await fs.mkdir(monthDir, { recursive: true });
@@ -101,8 +129,9 @@ export class MeetingStorage {
 
   async saveWhisper(input: MeetingDocumentInput): Promise<SavedMeetingDocument> {
     await this.ensureStructure();
+    const tier = this.selectTier(input.timestamp);
 
-    const whisperDir = path.join(this.rootDir, this.whispersDirName);
+    const whisperDir = path.join(this.rootDir, this.whispersDirName, tier);
     await fs.mkdir(whisperDir, { recursive: true });
 
     const indexPath = this.getIndexPath("whisper");
@@ -167,6 +196,11 @@ export class MeetingStorage {
 
   async isIndexed(sourceFileName: string, kind: DocumentKind): Promise<boolean> {
     return this.indexContainsSource(this.getIndexPath(kind), sourceFileName);
+  }
+
+  private selectTier(timestamp: Date): StorageTier {
+    const ageDays = (this.now().getTime() - timestamp.getTime()) / MS_PER_DAY;
+    return selectStorageTier(ageDays, this.hotTierMaxAgeDays, this.warmTierMaxAgeDays);
   }
 
   private async ensureIndexHeader(indexPath: string, header: string): Promise<void> {
@@ -249,6 +283,27 @@ export function formatDateTime(date: Date): string {
   );
 }
 
+export function selectStorageTier(
+  ageDays: number,
+  hotTierMaxAgeDays = DEFAULT_HOT_TIER_MAX_AGE_DAYS,
+  warmTierMaxAgeDays = DEFAULT_WARM_TIER_MAX_AGE_DAYS,
+): StorageTier {
+  const normalizedAgeDays = Number.isFinite(ageDays) ? Math.max(0, ageDays) : Number.MAX_VALUE;
+  const normalizedHotMax = normalizeTierDays(hotTierMaxAgeDays, DEFAULT_HOT_TIER_MAX_AGE_DAYS);
+  const normalizedWarmMax = Math.max(
+    normalizedHotMax,
+    normalizeTierDays(warmTierMaxAgeDays, DEFAULT_WARM_TIER_MAX_AGE_DAYS),
+  );
+
+  if (normalizedAgeDays <= normalizedHotMax) {
+    return "hot";
+  }
+  if (normalizedAgeDays <= normalizedWarmMax) {
+    return "warm";
+  }
+  return "cold";
+}
+
 const MONTH_SHORT_UPPER = [
   "JAN",
   "FEB",
@@ -274,6 +329,39 @@ function slugify(value: string): string {
 
 function safeInline(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+}
+
+function resolveTierThresholdDays(
+  optionsValue: number | undefined,
+  envValue: number | undefined,
+  fallback: number,
+): number {
+  if (typeof optionsValue === "number") {
+    return normalizeTierDays(optionsValue, fallback);
+  }
+  if (typeof envValue === "number") {
+    return normalizeTierDays(envValue, fallback);
+  }
+  return fallback;
+}
+
+function parseTierDaysFromEnv(envName: string): number | undefined {
+  const raw = process.env[envName];
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function normalizeTierDays(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
 }
 
 function renderMeetingNote(input: MeetingDocumentInput): string {

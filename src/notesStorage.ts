@@ -336,6 +336,15 @@ function toMeetingStorageOptions(options: MeetingStorageOptions): MeetingStorage
   if (options.whispersDirName) {
     normalized.whispersDirName = options.whispersDirName;
   }
+  if (typeof options.tierHotMaxAgeDays === "number") {
+    normalized.tierHotMaxAgeDays = options.tierHotMaxAgeDays;
+  }
+  if (typeof options.tierWarmMaxAgeDays === "number") {
+    normalized.tierWarmMaxAgeDays = options.tierWarmMaxAgeDays;
+  }
+  if (options.now) {
+    normalized.now = options.now;
+  }
   return normalized;
 }
 
