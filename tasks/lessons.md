@@ -9,3 +9,4 @@
 - Preventative rule: Any new remote storage backend must implement operation-level fallback to local persistence (`isIndexed` + save paths), so transient backend failures never block capture.
 - Preventative rule: Backend selection should be normalized in one parser (`local|memdock`) and reused across manual + auto-sync flows to prevent drift in runtime behavior.
 - Preventative rule: When a backend relies on HTTP endpoints, make API path prefix configurable (`*_API_PATH`) and test both env and CLI parsing to avoid hardcoded route coupling.
+- Preventative rule: During naming/branding migrations, run a repo-wide string audit (`rg`) and classify each hit as rename vs compatibility-retain before editing; document intentionally retained legacy identifiers in `tasks/todo.md` final review.

@@ -1,5 +1,5 @@
 {
-  "name": "hinotesskill",
+  "name": "hidockskill",
   "version": "1.0.0",
   "description": "HiDock WebUSB file parser and Whisper transcription skill",
   "main": "dist/index.js",

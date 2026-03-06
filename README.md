@@ -1,8 +1,8 @@
-# HiNotesSkill 📝  
+# HiDockSkill 📝  
 _Automated HiDock meeting transcription & summarization pipeline for OpenClaw_
 
 ## Overview
-HiNotesSkill connects to your HiDock device, fetches recordings from P1, transcribes audio using OpenAI Whisper, and generates concise Markdown meeting notes & indexes.
+HiDockSkill connects to your HiDock device, fetches recordings from P1, transcribes audio using OpenAI Whisper, and generates concise Markdown meeting notes & indexes.
 
 ## Features
 - Detect & list recordings from HiDock (no sudo required)
@@ -10,12 +10,12 @@ HiNotesSkill connects to your HiDock device, fetches recordings from P1, transcr
 - Auto‑summarize meetings via LLM
 - Store results as organized Markdown files
 - Selectable notes backend (`local` or `memdock`) with local fallback safety
-- Slack / OpenClaw query integration (“HiNotes, how many recordings on P1”)
+- Slack / OpenClaw query integration (“HiDockSkill, how many recordings on P1”)
 
 ## Quick Installation
 ```bash
 # inside your OpenClaw workspace
-clawhub install seanspsong/HiNotesSkill
+clawhub install seanspsong/HiDockSkill
 ```
 
 ## First‑Time Setup
@@ -140,7 +140,7 @@ This usually means the HiDock USB interface is occupied by another app/session.
 
 Check in order:
 1. Ensure HiDock P1 is plugged in.
-2. Ensure HiNotes in Chrome/browser is not open (it may occupy the device). Close it and retry.
+2. Ensure HiDockSkill in Chrome/browser is not open (it may occupy the device). Close it and retry.
 
 ## File Layout
 - `dist/` – compiled source  
@@ -152,13 +152,13 @@ Check in order:
 
 ### Option 1 – via ClawHub (preferred)
 ```bash
-clawhub install seanspsong/HiNotesSkill
+clawhub install seanspsong/HiDockSkill
 ```
 
 ### Option 2 – manual install
 ```bash
 mkdir -p ~/.openclaw/workspace/skills/
-git clone https://github.com/seanspsong/HiNotesSkill ~/.openclaw/workspace/skills/hinotes
+git clone https://github.com/seanspsong/HiDockSkill ~/.openclaw/workspace/skills/hinotes
 ```
 Then reload:
 ```bash
@@ -166,25 +166,25 @@ openclaw reload skills
 ```
 
 ## Use from OpenClaw / Slack
-After installation, you can invoke HiNotes conversationally or programmatically.
+After installation, you can invoke HiDockSkill conversationally or programmatically.
 
 | Command | Description |
 |----------|--------------|
-| "HiNotes, how many recordings I have on P1" | List all recordings detected on your HiDock P1 |
-| "HiNotes, process them" | Run transcription + summary pipeline for all new recordings |
-| "HiNotes, summarize latest meeting" | Re‑summarize the last sync batch |
-| "HiNotes, show index" | Display the Markdown meeting index |
+| "HiDockSkill, how many recordings I have on P1" | List all recordings detected on your HiDock P1 |
+| "HiDockSkill, process them" | Run transcription + summary pipeline for all new recordings |
+| "HiDockSkill, summarize latest meeting" | Re‑summarize the last sync batch |
+| "HiDockSkill, show index" | Display the Markdown meeting index |
 
 Results (transcripts + summaries) are stored in:
 ```
-/Users/<user>/seanslab/HiNotesSkill/meeting-storage/
+/Users/<user>/seanslab/HiDockSkill/meeting-storage/
 ```
 
 ## OpenAI API Key Setup
 To enable transcription and summarization, set your OpenAI API key locally (never commit it):
 
 ```bash
-cd ~/HiNotesSkill
+cd ~/HiDockSkill
 echo "OPENAI_API_KEY=sk-..." > .env
 ```
 

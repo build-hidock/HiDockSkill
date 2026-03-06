@@ -1,69 +1,50 @@
-# Task Plan - 2026-03-06 Memdock Backend Integration for Synced Meeting Notes
+# Task Plan - 2026-03-06 HiNotes → HiDockSkill Naming Cleanup
 
 ## Problem Statement
-HiNotes sync currently stores notes locally only. We need to integrate memdock as a notes storage + brain backend for meeting sync while keeping local markdown as resilient fallback when memdock is unavailable.
+There are still legacy `HiNotes`/`HiNotesSkill` strings in docs, package metadata, and user-facing copy. We need a minimal-impact cleanup to align project naming to **HiDockSkill** without breaking runtime compatibility (especially existing command/skill IDs that still rely on `hinotes`).
 
 ## Lightweight SDD
-### Goal
-Enable `meetings:sync` and USB-triggered auto-sync to use a typed storage adapter that can index/write via memdock with best-effort behavior and automatic local fallback.
+### Scope
+- Rename remaining user-facing/docs metadata strings from `HiNotes`/`HiNotesSkill` to `HiDockSkill` where safe.
+- Keep compatibility-sensitive identifiers unchanged unless clearly safe.
 
-### Interfaces
-- `src/notesStorage.ts`
-  - Provide concrete `MemdockNotesStorageAdapter` implementation for `saveMeeting`, `saveWhisper`, `isIndexed`, and index path reporting.
-  - Keep `LocalMeetingStorageAdapter` as source-of-truth fallback path.
-  - Add typed memdock config, including endpoint/auth/path options.
-- `src/cli/meetingsSync.ts`
-  - Parse memdock backend/config from env + CLI flags.
-  - Construct storage adapter once and pass into workflow.
-- `src/cli/usbWatch.ts`
-  - Keep auto-sync pipeline calling `runMeetingsSync`, so memdock path is used transparently when configured.
-- `README.md`
-  - Document backend selection and explicit memdock env/CLI setup.
+### Interfaces / Surfaces
+- Docs: `README.md`, `docs/SDD-HiDockSkill.md`, devlogs.
+- Metadata: `package.json`, `package-lock.json` package name fields.
+- User messages: `list-files-user.js` troubleshooting text.
+- Process docs: `tasks/lessons.md`, `devlog-20260306.md`.
 
 ### Constraints
-- Minimal-impact change: no broad refactor beyond storage adapter wiring.
-- No hardcoded secrets.
-- Local markdown storage must remain available and automatically used on memdock failures.
-- Keep existing CLI behavior and test suite stable.
+- Minimal-impact edits only (no functional refactor).
+- Do not rename runtime command IDs / env keys unless safe.
+- Preserve compatibility with existing OpenClaw skill install path `skills/hinotes` and `hinotes` command references where they may be operational.
 
 ### Failure Modes
-- **Memdock unreachable/timeout/5xx**: log warning and fallback to local adapter.
-- **Memdock returns malformed payload**: treat as failure and fallback to local adapter.
-- **Invalid backend/env values**: fail fast with clear parse error.
-- **Auto-sync runs while memdock flaps**: each operation still succeeds via fallback; sync continues.
-- **Index check API failure**: fallback to local index check to avoid duplicate writes.
+- Over-renaming compatibility IDs could break existing workflows.
+- Missing stale strings could leave inconsistent branding/docs.
 
 ### Rollback Plan
-1. Revert memdock-specific adapter logic and CLI options.
-2. Force backend to `local` in `meetings:sync` path.
-3. Keep sync pipeline and state logic unchanged.
-4. Re-run tests (`npm test`, `npm run build`) to verify baseline.
+1. Revert commit containing naming cleanup.
+2. Re-run verification (`npm test`, `npm run build`).
+3. Restore prior docs/package naming if compatibility issues appear.
 
 ## Implementation Checklist
-- [x] Review existing storage/sync wiring and confirm integration gaps.
-- [x] Finalize memdock adapter implementation in `src/notesStorage.ts` (replace TODO behavior fully).
-- [x] Add/adjust memdock config fields for endpoint/auth/path via env + CLI.
-- [x] Ensure meetings sync + USB watch auto-sync flow writes/indexes through adapter.
-- [x] Add unit tests for memdock adapter behavior and CLI/env parsing.
-- [x] Update README with memdock setup/run instructions.
-- [x] Update `devlog-20260306.md` and `tasks/lessons.md`.
-- [x] Run required verification (`npm test`, `npm run build`).
-- [ ] Commit with clear message and push current branch.
+- [x] Inventory all remaining `HiNotes`/`HiNotesSkill` strings.
+- [x] Update safe docs/user-facing strings to `HiDockSkill`.
+- [x] Update package metadata naming fields consistently (`package.json`, lock file).
+- [x] Keep explicit compatibility strings where necessary and document them.
+- [x] Update devlog and lessons learned with this correction cycle.
+- [x] Run verification (`npm test`, `npm run build`).
+- [ ] Commit and push to `origin/master`.
 
 ## Acceptance Criteria
-- `src/notesStorage.ts` contains a real memdock adapter (no placeholder TODO behavior).
-- Backend can be selected via config (`local|memdock`) without hardcoded secrets.
-- Memdock endpoint/auth/path are configurable by env/CLI and documented.
-- `meetings:sync` and USB auto-sync use storage adapter path.
-- If memdock fails/unavailable, notes still persist locally and sync does not crash.
-- Tests cover memdock adapter + arg/config parsing.
-- Required commands succeed: `npm test`, `npm run build`.
+- No unintended `HiNotesSkill` branding remains in user-facing docs/metadata.
+- Runtime behavior is unchanged (tests/build pass).
+- Compatibility-sensitive `hinotes` identifiers are intentionally retained and documented.
 
 ## Verification Checklist
 - [x] `npm test`
 - [x] `npm run build`
-- [x] Targeted checks for memdock fallback, request shape, and parsing behavior
-- [x] Confirm docs updated for operator setup
 
 ## Final Review (to fill after implementation)
 - Tests run:
@@ -73,4 +54,4 @@ Enable `meetings:sync` and USB-triggered auto-sync to use a typed storage adapte
   - `npm test`: pass (11 files / 43 tests)
   - `npm run build`: pass
 - Known limitations:
-  - Direct clone/read of upstream `https://github.com/seanslab-org/memdock` could not be performed in this environment due blocked outbound DNS/network. Adapter behavior was implemented and validated locally with request/fallback tests.
+  - Intentionally retained compatibility identifiers: lowercase `hinotes` command/path/env conventions (e.g., `hinotes index verify`, `skills/hinotes`, memdock default collection/test fixtures) remain unchanged to avoid breaking existing automation/state.

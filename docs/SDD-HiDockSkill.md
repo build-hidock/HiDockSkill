@@ -1,5 +1,5 @@
 # Executive Summary
-HiNotesSkill reliably pulls recordings from HiDock devices, transcribes them with OpenAI Whisper, and produces Markdown meeting notes. Usage revealed friction around throughput, resiliency, and extensibility. This SDD proposes a staged upgrade that keeps OpenAI as the summary provider (per product rule) while creating a clean abstraction so Claude or other providers can be added later without touching the storage or CLI layers. The design also introduces resumable/parallel processing, structured metadata, richer CLI ergonomics, and an expanded test/telemetry surface so we can treat HiNotesSkill like a production pipeline instead of a single-run script.
+HiDockSkill reliably pulls recordings from HiDock devices, transcribes them with OpenAI Whisper, and produces Markdown meeting notes. Usage revealed friction around throughput, resiliency, and extensibility. This SDD proposes a staged upgrade that keeps OpenAI as the summary provider (per product rule) while creating a clean abstraction so Claude or other providers can be added later without touching the storage or CLI layers. The design also introduces resumable/parallel processing, structured metadata, richer CLI ergonomics, and an expanded test/telemetry surface so we can treat HiDockSkill like a production pipeline instead of a single-run script.
 
 ## Problem & Goals
 **Goals**
