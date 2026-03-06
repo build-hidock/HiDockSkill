@@ -139,7 +139,23 @@ export class HiDockClient {
     for (let reads = 0; reads < readLimit && received < expectedSize; reads += 1) {
       const frames = await this.transport.readFrames();
       for (const frame of frames) {
-        if (frame.commandId !== commandId || frame.messageId !== messageId) {
+        if (frame.commandId !== commandId) {
+          continue;
+        }
+
+        // H1 firmware streams TRANSFER_FILE chunks with auto-incremented messageId
+        // (startId, startId+1, ...), while older devices may reuse the same id.
+        // Accept both patterns for file transfer commands.
+        if (
+          commandId !== HiDockCommand.TRANSFER_FILE &&
+          frame.messageId !== messageId
+        ) {
+          continue;
+        }
+        if (
+          commandId === HiDockCommand.TRANSFER_FILE &&
+          frame.messageId < messageId
+        ) {
           continue;
         }
         if (frame.body.length === 0) {
