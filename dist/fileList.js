@@ -40,17 +40,20 @@ export function parseHiDockFileListBody(body) {
     let cursor = 6;
     for (let index = 0; index < fileCount; index += 1) {
         if (cursor + 1 + 3 + 4 + 6 + 16 > body.length) {
-            throw new Error(`File entry ${index} is truncated`);
+            // Some firmware variants (observed on H1) can report a larger fileCount
+            // than the payload actually contains. Stop on truncated tail instead of
+            // hard-failing the full list.
+            break;
         }
         const fileVersion = body[cursor];
         if (fileVersion === undefined) {
-            throw new Error(`File entry ${index} is truncated at fileVersion`);
+            break;
         }
         cursor += 1;
         const fileNameLength = readU24BE(body, cursor);
         cursor += 3;
         if (cursor + fileNameLength + 4 + 6 + 16 > body.length) {
-            throw new Error(`File entry ${index} has invalid fileNameLength=${fileNameLength}`);
+            break;
         }
         const rawFileNameBytes = Uint8Array.from(body.subarray(cursor, cursor + fileNameLength));
         const fileName = trimTrailingNul(textDecoder.decode(rawFileNameBytes));
