@@ -139,12 +139,16 @@ Expected output example:
 
 ## Troubleshooting
 
-### `LIBUSB_ERROR_ACCESS`
+### `LIBUSB_ERROR_ACCESS` / skill cannot connect to device
 This usually means the HiDock USB interface is occupied by another app/session.
 
 Check in order:
 1. Ensure HiDock P1 is plugged in.
-2. Ensure HiDockSkill in Chrome/browser is not open (it may occupy the device). Close it and retry.
+2. Check if HiNotes web / browser page is open and connected to HiDock (it can occupy the device exclusively).
+3. Close the HiNotes/HiDock web tab (or browser), then retry HiDockSkill.
+4. If needed, stop watcher/sync process and retry:
+   - `pkill -f "npm run usb:watch"`
+   - `pkill -f "meetings:sync"`
 
 ## File Layout
 - `dist/` – compiled source  
