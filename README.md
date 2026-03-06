@@ -40,6 +40,10 @@ clawhub install seanspsong/HiDockSkill
 Use this long-running command for real-time plug-in notifications.
 By default, each plug-in event also triggers an incremental auto-sync run:
 
+> 💡 **Tip (USB ownership):** HiDock can only be owned by one app at a time. If you want to use HiNotes web, stop any running `usb:watch` / sync process first so the device is released immediately.
+> - Find running watcher: `pgrep -af "usb:watch|meetings:sync"`
+> - Stop watcher: `pkill -f "npm run usb:watch"`
+
 ```bash
 npm run usb:watch
 ```
