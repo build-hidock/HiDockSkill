@@ -138,6 +138,23 @@ describe("HiDock USB connection monitor", () => {
     monitor.stop();
   });
 
+  it("logs a helpful warning when USB is present but busy", async () => {
+    vi.useFakeTimers();
+    const log = vi.fn();
+    const findDevice = vi.fn(async () => {
+      throw new Error("LIBUSB_ERROR_BUSY");
+    });
+
+    const monitor = createHiDockConnectionMonitor({ findDevice, log });
+    monitor.start();
+    await flushAsyncWork();
+
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]?.[0]).toContain("If HiNotes Web is open, it may be occupying the USB connection.");
+
+    monitor.stop();
+  });
+
   it("formats a popup-style prompt with fallback product name", () => {
     const prompt = formatHiDockPluggedInPrompt("");
     expect(prompt).toContain("HiDock Unknown Device plugged in, auto sync your latest recordings now...");

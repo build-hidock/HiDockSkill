@@ -75,7 +75,11 @@ export function createHiDockConnectionMonitor(options = {}) {
             wasConnected = true;
             hasObservedState = true;
         }
-        catch {
+        catch (error) {
+            const reason = toErrorMessage(error);
+            if (!isNoDeviceFoundError(reason)) {
+                log(`[HiDock USB Watch] unable to access HiDock USB (${reason}). If HiNotes Web is open, it may be occupying the USB connection.`);
+            }
             wasConnected = false;
             hasObservedState = true;
         }
@@ -112,5 +116,17 @@ function getProductName(device) {
         ? maybeNamed.productName.trim()
         : "";
     return productName || "Unknown Device";
+}
+function toErrorMessage(error) {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === "string") {
+        return error;
+    }
+    return "Unknown USB error";
+}
+function isNoDeviceFoundError(message) {
+    return message.includes("No HiDock USB device found");
 }
 //# sourceMappingURL=nodeUsb.js.map

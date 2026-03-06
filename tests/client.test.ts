@@ -56,6 +56,19 @@ describe("HiDockClient", () => {
     expect(progress).toHaveBeenLastCalledWith(10, 10);
   });
 
+  it("opens and closes around withConnection", async () => {
+    const open = vi.fn(async () => {});
+    const close = vi.fn(async () => {});
+    const transport = createMockTransport({ open, close });
+    const client = new HiDockClient(transport);
+
+    const value = await client.withConnection(async () => 7);
+
+    expect(value).toBe(7);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("parses device info response", async () => {
     const transport = createMockTransport({
       requestResponseFrame: async (commandId, messageId) => {

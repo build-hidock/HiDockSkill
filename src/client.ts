@@ -39,6 +39,7 @@ export interface HiDockTransportLike {
 export class HiDockClient {
   private readonly transport: HiDockTransportLike;
   private messageId = 0;
+  private connected = false;
 
   constructor(transport: HiDockTransportLike) {
     this.transport = transport;
@@ -52,11 +53,31 @@ export class HiDockClient {
   }
 
   async open(): Promise<void> {
+    if (this.connected) {
+      return;
+    }
     await this.transport.open();
+    this.connected = true;
   }
 
   async close(): Promise<void> {
-    await this.transport.close();
+    if (!this.connected) {
+      return;
+    }
+    try {
+      await this.transport.close();
+    } finally {
+      this.connected = false;
+    }
+  }
+
+  async withConnection<T>(run: () => Promise<T>): Promise<T> {
+    await this.open();
+    try {
+      return await run();
+    } finally {
+      await this.close();
+    }
   }
 
   async getDeviceInfo(): Promise<HiDockDeviceInfo> {

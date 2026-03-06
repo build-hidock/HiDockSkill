@@ -17,10 +17,12 @@ export interface HiDockTransportLike {
 export declare class HiDockClient {
     private readonly transport;
     private messageId;
+    private connected;
     constructor(transport: HiDockTransportLike);
     static fromUsbDevice(device: UsbDeviceLike, options?: HiDockTransportOptions): HiDockClient;
     open(): Promise<void>;
     close(): Promise<void>;
+    withConnection<T>(run: () => Promise<T>): Promise<T>;
     getDeviceInfo(): Promise<HiDockDeviceInfo>;
     getDeviceTime(): Promise<HiDockDeviceTime>;
     getFileCount(): Promise<number>;

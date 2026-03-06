@@ -16,9 +16,8 @@ export async function runMeetingsSync(input) {
     }
     const stateStore = new SyncStateStore(options.stateFile);
     const client = await createNodeHiDockClient();
-    await client.open();
     try {
-        const { files } = await client.listFiles();
+        const { files } = await client.withConnection(() => client.listFiles());
         const state = await stateStore.read();
         const filtered = files.filter((file) => stateStore.shouldProcessFile(file, state));
         let selected = selectFiles(filtered, options);

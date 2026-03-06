@@ -36,7 +36,9 @@ export class HiDockWhisperSkill {
       expectedSize: file.fileSize,
       ...(onProgress ? { onProgress } : {}),
     };
-    const audioBytes = await this.client.downloadFile(file, downloadOptions);
+    const audioBytes = await this.client.withConnection(() =>
+      this.client.downloadFile(file, downloadOptions)
+    );
 
     const whisperInput = {
       apiKey: this.options.apiKey,
@@ -63,7 +65,7 @@ export class HiDockWhisperSkill {
   async transcribeLatestFile(
     onProgress?: (receivedBytes: number, expectedBytes: number) => void,
   ): Promise<FileTranscriptionResult> {
-    const { files } = await this.client.listFiles();
+    const { files } = await this.client.withConnection(() => this.client.listFiles());
     if (files.length === 0) {
       throw new Error("No files found on HiDock device.");
     }

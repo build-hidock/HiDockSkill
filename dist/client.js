@@ -7,6 +7,7 @@ const textEncoder = new TextEncoder();
 export class HiDockClient {
     transport;
     messageId = 0;
+    connected = false;
     constructor(transport) {
         this.transport = transport;
     }
@@ -14,10 +15,31 @@ export class HiDockClient {
         return new HiDockClient(new HiDockWebUsbTransport(device, options));
     }
     async open() {
+        if (this.connected) {
+            return;
+        }
         await this.transport.open();
+        this.connected = true;
     }
     async close() {
-        await this.transport.close();
+        if (!this.connected) {
+            return;
+        }
+        try {
+            await this.transport.close();
+        }
+        finally {
+            this.connected = false;
+        }
+    }
+    async withConnection(run) {
+        await this.open();
+        try {
+            return await run();
+        }
+        finally {
+            await this.close();
+        }
     }
     async getDeviceInfo() {
         const frame = await this.requestSingle(HiDockCommand.QUERY_DEVICE_INFO);
