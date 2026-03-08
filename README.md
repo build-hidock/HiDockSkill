@@ -16,7 +16,7 @@ HiDockSkill connects to your HiDock device, fetches recordings from P1, transcri
 ## Quick Installation
 ```bash
 # inside your OpenClaw workspace
-clawhub install seanspsong/HiDockSkill
+clawhub install build-hidock/HiDockSkill
 ```
 
 ## First‑Time Setup
@@ -203,13 +203,13 @@ Check in order:
 
 ### Option 1 – via ClawHub (preferred)
 ```bash
-clawhub install seanspsong/HiDockSkill
+clawhub install build-hidock/HiDockSkill
 ```
 
 ### Option 2 – manual install
 ```bash
 mkdir -p ~/.openclaw/workspace/skills/
-git clone https://github.com/seanspsong/HiDockSkill ~/.openclaw/workspace/skills/hinotes
+git clone https://github.com/build-hidock/HiDockSkill ~/.openclaw/workspace/skills/hinotes
 ```
 Then reload:
 ```bash
