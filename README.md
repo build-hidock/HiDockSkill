@@ -250,4 +250,4 @@ echo "OPENAI_API_KEY=sk-..." > .env
 - Any memdock request failure degrades to local adapter behavior for resilience.
 
 ## License
-© 2026 Sean Song – Private use & collaborator‑only distribution.
+MIT License – see [LICENSE](LICENSE) for details.
