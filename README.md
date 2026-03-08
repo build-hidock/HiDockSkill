@@ -36,7 +36,7 @@ clawhub install seanspsong/HiDockSkill
    ```bash
    node dist/cli/meetingsSync.js
    ```
-   Default storage is `/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes`.
+   Default storage is `$MEETING_STORAGE_DIR` (see code for compiled-in default).
 
 ## Continuous USB Plug-In Watch (OpenClaw)
 Use this long-running command for real-time plug-in notifications.
@@ -91,7 +91,7 @@ Optional startup behavior:
   ```
 
 Incremental sync state:
-- default state file: `/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes/.hidock-sync-state.json`
+- default state file: `<storage>/.hidock-sync-state.json`
 - stores last successful sync timestamp + processed file markers
 - repeated plug-in events are idempotent and will skip already-processed recordings
 - override state file path manually:
@@ -196,7 +196,7 @@ Check in order:
 ## File Layout
 - `dist/` – compiled source  
 - `list-files-user.js` – safe, non‑sudo device lister  
-- `/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes/` – generated Markdown notes  
+- `<storage>/` – generated Markdown notes  
 - `skills/hinotes/SKILL.md` – manifest & setup documentation
 
 ## Install from OpenClaw
@@ -228,7 +228,7 @@ After installation, you can invoke HiDockSkill conversationally or programmatica
 
 Results (transcripts + summaries) are stored in:
 ```
-/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes/
+<storage>/
 ```
 
 ## OpenAI API Key Setup
