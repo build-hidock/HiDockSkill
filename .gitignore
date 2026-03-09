@@ -3,3 +3,4 @@ meeting-storage/
 *.map
 .env
 .DS_Store
+logs/

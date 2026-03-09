@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { platform } from "node:os";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -80,9 +81,20 @@ async function main(): Promise<void> {
     ? async () => {
       try {
         const syncOptions = parseMeetingsSyncArgs([]);
-        await runMeetingsSync({ options: syncOptions, logger: console });
+        const result = await runMeetingsSync({ options: syncOptions, logger: console });
+        const saved = result?.saved ?? 0;
+        const failed = result?.failed ?? 0;
+        if (saved > 0 || failed > 0) {
+          const parts: string[] = [];
+          if (saved > 0) parts.push(`${saved} synced`);
+          if (failed > 0) parts.push(`${failed} failed`);
+          sendDesktopNotification("HiDock Sync", parts.join(", "), log);
+        } else {
+          sendDesktopNotification("HiDock Sync", "All recordings up to date", log);
+        }
       } catch (error) {
         log(`[sync] failed: ${toErrorMessage(error)}`);
+        sendDesktopNotification("HiDock Sync", `Sync failed: ${toErrorMessage(error)}`, log);
       }
     }
     : undefined;
@@ -459,6 +471,36 @@ function readUnknownString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+const HIDOCK_NOTIFIER_BIN = new URL(
+  "../../HiDockNotifier.app/Contents/MacOS/terminal-notifier",
+  import.meta.url,
+);
+
+function sendDesktopNotification(
+  title: string,
+  message: string,
+  log?: (message: string) => void,
+): void {
+  if (platform() !== "darwin") {
+    return;
+  }
+  const notifierPath = HIDOCK_NOTIFIER_BIN.pathname;
+  const args = ["-title", title, "-message", message, "-timeout", "10"];
+  execFile(notifierPath, args, (error) => {
+    if (error) {
+      // Fallback to osascript if HiDockNotifier is not available
+      const escapedTitle = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const escapedMessage = message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const script = `display notification "${escapedMessage}" with title "${escapedTitle}"`;
+      execFile("osascript", ["-e", script], (fallbackError) => {
+        if (fallbackError && log) {
+          log(`Desktop notification failed: ${toErrorMessage(fallbackError)}`);
+        }
+      });
+    }
+  });
+}
+
 export function createUsbWatchPlugInHandler(options: {
   log: (message: string) => void;
   sendSlackMessage?: (message: string) => Promise<void>;
@@ -466,6 +508,7 @@ export function createUsbWatchPlugInHandler(options: {
 }): (event: HiDockPlugInEvent) => void {
   return (event: HiDockPlugInEvent): void => {
     options.log(event.prompt);
+    sendDesktopNotification("HiDock P1", "Device connected. Syncing recordings...", options.log);
     if (options.onAutoSync) {
       options.onAutoSync();
     }
