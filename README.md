@@ -1,253 +1,187 @@
-# HiDockSkill 📝  
-_Automated HiDock meeting transcription & summarization pipeline for OpenClaw_
+# HiDockSkill
 
-## Overview
-HiDockSkill connects to your HiDock device, fetches recordings from P1, transcribes audio using OpenAI Whisper, and generates concise Markdown meeting notes & indexes.
+Automated meeting transcription, summarization, and visualization pipeline for [HiDock P1](https://www.hidock.com/) USB meeting recorder.
 
-## Features
-- Detect & list recordings from HiDock (no sudo required)
-- Transcribe using Whisper
-- Auto‑summarize meetings via LLM
-- Store results as organized Markdown files (new note filenames use `YYYYMMDD-HHMMSS`)
-- Selectable notes backend (`local` or `memdock`) with local fallback safety
-- Slack / OpenClaw query integration (“HiDockSkill, how many recordings on P1”)
-- Recording-date parsing remains backward compatible with legacy `YYYYMonDD-HHMMSS` source filenames
+## What It Does
 
-## Quick Installation
-```bash
-# inside your OpenClaw workspace
-clawhub install build-hidock/HiDockSkill
-```
+1. Connects to HiDock P1 via USB
+2. Downloads recordings from the device
+3. Transcribes audio with OpenAI Whisper
+4. Summarizes with GPT-4o-mini
+5. Saves Markdown notes with audio files to tiered storage
+6. Visualizes your meeting history as an interactive galaxy dashboard
 
-## First‑Time Setup
-1. Connect your HiDock via USB.  
-2. Ensure permissions are correct (macOS `chmod a+rw /dev/usb/*` or udev rule on Linux).  
-3. Run:
-   ```bash
-   node list-files-user.js
-   ```
-   Expect output similar to:
-   ```
-   Total recordings on P1: 2
-   20260221‑132825‑Rec00.hda (0.2 MB)
-   20260221‑132846‑Wip00.hda (0.0 MB)
-   ```
-4. To process recordings:
-   ```bash
-   node dist/cli/meetingsSync.js
-   ```
-   Default storage is `$MEETING_STORAGE_DIR` (see code for compiled-in default).
+## Galaxy Dashboard
 
-## Continuous USB Plug-In Watch (OpenClaw)
-Use this long-running command for real-time plug-in notifications.
-By default, each plug-in event also triggers an incremental auto-sync run:
+A D3.js force-directed graph that maps all your meeting notes as an interactive constellation.
 
-> 💡 **Tip (USB ownership):** HiDock can only be owned by one app at a time. If you want to use HiNotes web, stop any running `usb:watch` / sync process first so the device is released immediately.
-> - Find running watcher: `pgrep -af "usb:watch|meetings:sync"`
-> - Stop watcher: `pkill -f "npm run usb:watch"`
+- **Galaxy view** — force-directed graph with memcard nodes, orbital rings by tier (hot/warm/cold), color-coded source type dots, and relationship edges
+- **List view** — searchable, sortable table of all notes
+- **Tab switcher** — floating tabs at top center to switch between views
+- **Note popup** — click any card or row to open an elegant modal with summary, transcript, and audio player
+- **AI insights sidebar** — hot topics cloud, action items, reminders, achievements extracted from recent notes
+- **Syncing overlay** — pulsing animation while device is syncing, auto-transitions to galaxy when ready
+
+Open the dashboard:
 
 ```bash
-npm run usb:watch
+npm run galaxy:open
 ```
 
-For OpenClaw runner invocation:
-```bash
-npm run usb:watch -- --interval-ms 5000
-```
+Or visit http://127.0.0.1:18180 when the USB watcher is running.
 
-Slack DM auto-forward (recommended for proactive alerts):
-```bash
-export HIDOCK_USB_WATCH_SLACK_TARGET="U12345678"
-npm run usb:watch
-```
+## Quick Start
 
-Thread-aware routing (active in last 5m -> thread, otherwise DM timeline):
-```bash
-export HIDOCK_USB_WATCH_SLACK_TARGET="D12345678"
-export HIDOCK_USB_WATCH_SLACK_THREAD_ID="1741246283.005900"
-export HIDOCK_USB_WATCH_SLACK_ACTIVITY_USER_ID="U12345678"
-export HIDOCK_USB_WATCH_ACTIVE_WINDOW_MINUTES="5"
-npm run usb:watch
-```
-
-Or provide target/bin via flags:
-```bash
-npm run usb:watch -- --slack-target D12345678 --slack-thread-id 1741246283.005900 --slack-activity-user-id U12345678 --active-window-minutes 5 --openclaw-bin /usr/local/bin/openclaw
-```
-
-Optional startup behavior:
-- default: emits once immediately if P1 is already connected when watcher starts
-- disable startup emission:
-  ```bash
-  npm run usb:watch -- --no-emit-on-startup
-  ```
-- disable Slack forwarding even when env target is set:
-  ```bash
-  npm run usb:watch -- --no-slack-forward
-  ```
-- disable auto-sync (watch-only mode):
-  ```bash
-  npm run usb:watch -- --no-auto-sync
-  ```
-
-Incremental sync state:
-- default state file: `<storage>/.hidock-sync-state.json`
-- stores last successful sync timestamp + processed file markers
-- repeated plug-in events are idempotent and will skip already-processed recordings
-- override state file path manually:
-  ```bash
-  npm run meetings:sync -- --state-file ./meeting-storage/custom-sync-state.json
-  ```
-
-Storage backend selection:
-- default backend: `local` (writes markdown files under `--storage`)
-- select memdock backend:
-  ```bash
-  export HIDOCK_NOTES_BACKEND=memdock
-  export MEMDOCK_BASE_URL=http://127.0.0.1:7788
-  export MEMDOCK_API_PATH=/api/v1/notes
-  npm run meetings:sync
-  ```
-- explicit flags for manual runs:
-  ```bash
-  npm run meetings:sync -- --storage-backend memdock --memdock-base-url http://127.0.0.1:7788 --memdock-api-path /api/v1/notes
-  ```
-- optional custom memdock API path (default: `/api/v1/notes`):
-  ```bash
-  npm run meetings:sync -- --storage-backend memdock --memdock-base-url http://127.0.0.1:7788 --memdock-api-path /api/v2/notes
-  ```
-- watcher auto-sync uses the same env (`HIDOCK_NOTES_BACKEND`, `MEMDOCK_*`)
-- optional memdock env:
-  - `MEMDOCK_API_KEY` (bearer token)
-  - `MEMDOCK_API_PATH` (API prefix, default `/api/v1/notes`)
-  - `MEMDOCK_WORKSPACE`, `MEMDOCK_COLLECTION`, `MEMDOCK_TIMEOUT_MS`
-- if memdock is unreachable/misconfigured, sync falls back to local storage automatically
-
-Local storage tiering (hotmem/warmmem/coldmem):
-- local notes are saved into `hotmem`, `warmmem`, or `coldmem` based on recording timestamp age
-- tier rules (age in days, inclusive):
-  - `hotmem`: `ageDays <= HOT_MAX`
-  - `warmmem`: `HOT_MAX < ageDays <= WARM_MAX`
-  - `coldmem`: `ageDays > WARM_MAX`
-- defaults:
-  - `HOT_MAX=30`
-  - `WARM_MAX=180`
-- env overrides (optional):
-  - `HIDOCK_NOTES_TIER_HOT_MAX_DAYS`
-  - `HIDOCK_NOTES_TIER_WARM_MAX_DAYS`
-
-Resulting local folder structure:
-```text
-<storage>/
-  meetingindex.md
-  whisperindex.md
-  meetings/
-    hotmem/
-      YYYYMM/
-        YYYYMMDD-HHMMSS-<title-slug>.md
-    warmmem/
-      YYYYMM/
-        YYYYMMDD-HHMMSS-<title-slug>.md
-    coldmem/
-      YYYYMM/
-        YYYYMMDD-HHMMSS-<title-slug>.md
-  whispers/
-    hotmem/
-      YYYYMMDD-HHMMSS.md
-    warmmem/
-      YYYYMMDD-HHMMSS.md
-    coldmem/
-      YYYYMMDD-HHMMSS.md
-```
-
-Index behavior:
-- `meetingindex.md` and `whisperindex.md` stay at `<storage>/`
-- each `Note:` entry stores the relative path including tier folder (example: `meetings/warmmem/202602/20260221-091626-weekly-sync.md`)
-
-Auto-sync concurrency control:
-- watcher uses single-flight lock + debounce (default `1500ms`)
-- burst plug-in events are coalesced to avoid overlapping sync runs
-- tune debounce:
-  ```bash
-  npm run usb:watch -- --sync-debounce-ms 2500
-  ```
-
-Expected output example:
-```text
-[HiDock USB Watch] starting (intervalMs=5000, emitOnStartupIfConnected=true, slackForward=enabled, threadRouting=enabled, activeWindowMinutes=5)
-[HiDock USB Watch] ============================================
-[HiDock USB Watch] | HiDock P1 plugged in, auto sync your latest recordings now... |
-[HiDock USB Watch] ============================================
-```
-
-## Troubleshooting
-
-### `LIBUSB_ERROR_ACCESS` / skill cannot connect to device
-This usually means the HiDock USB interface is occupied by another app/session.
-
-Check in order:
-1. Ensure HiDock P1 is plugged in.
-2. Check if HiNotes web / browser page is open and connected to HiDock (it can occupy the device exclusively).
-3. Close the HiNotes/HiDock web tab (or browser), then retry HiDockSkill.
-4. If needed, stop watcher/sync process and retry:
-   - `pkill -f "npm run usb:watch"`
-   - `pkill -f "meetings:sync"`
-
-## File Layout
-- `dist/` – compiled source  
-- `list-files-user.js` – safe, non‑sudo device lister  
-- `<storage>/` – generated Markdown notes  
-- `skills/hinotes/SKILL.md` – manifest & setup documentation
-
-## Install from OpenClaw
-
-### Option 1 – via ClawHub (preferred)
-```bash
-clawhub install build-hidock/HiDockSkill
-```
-
-### Option 2 – manual install
-```bash
-mkdir -p ~/.openclaw/workspace/skills/
-git clone https://github.com/build-hidock/HiDockSkill ~/.openclaw/workspace/skills/hinotes
-```
-Then reload:
-```bash
-openclaw reload skills
-```
-
-## Use from OpenClaw / Slack
-After installation, you can invoke HiDockSkill conversationally or programmatically.
-
-| Command | Description |
-|----------|--------------|
-| "HiDockSkill, how many recordings I have on P1" | List all recordings detected on your HiDock P1 |
-| "HiDockSkill, process them" | Run transcription + summary pipeline for all new recordings |
-| "HiDockSkill, summarize latest meeting" | Re‑summarize the last sync batch |
-| "HiDockSkill, show index" | Display the Markdown meeting index |
-
-Results (transcripts + summaries) are stored in:
-```
-<storage>/
-```
-
-## OpenAI API Key Setup
-To enable transcription and summarization, set your OpenAI API key locally (never commit it):
+### 1. Install
 
 ```bash
-cd ~/HiDockSkill
+git clone https://github.com/build-hidock/HiDockSkill.git
+cd HiDockSkill
+npm install
+```
+
+### 2. Configure
+
+```bash
 echo "OPENAI_API_KEY=sk-..." > .env
 ```
 
-`.env` is listed in `.gitignore`, so the key remains private. Whisper and summary models will automatically load it at runtime.
+### 3. Connect HiDock P1 via USB
 
-## Storage Adapter Notes
-- `LocalMeetingStorageAdapter` writes markdown files to disk (default backend).
-- `MemdockNotesStorageAdapter` calls memdock HTTP endpoints:
-  - `POST <MEMDOCK_API_PATH>/is-indexed` (default path: `/api/v1/notes`)
-  - `POST <MEMDOCK_API_PATH>/save` (default path: `/api/v1/notes`)
-- Both manual sync (`meetings:sync`) and auto-sync (`usb:watch`) go through the same adapter selection path.
-- Any memdock request failure degrades to local adapter behavior for resilience.
+> **USB exclusivity:** HiDock can only be owned by one app at a time. Close HiNotes web/browser before using HiDockSkill.
+
+### 4. Sync recordings
+
+```bash
+npm run meetings:sync
+```
+
+### 5. Start USB watcher (recommended)
+
+Auto-syncs when you plug in, opens galaxy dashboard, sends macOS notifications:
+
+```bash
+npm run usb:watch
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run meetings:sync` | Sync all new recordings from device |
+| `npm run usb:watch` | Long-running USB plug-in monitor with auto-sync |
+| `npm run galaxy:open` | Open galaxy dashboard in browser |
+| `npm run galaxy` | Start galaxy server without opening browser |
+| `npm test` | Run test suite |
+| `npm run build` | Compile TypeScript |
+
+## Sync Flags
+
+```bash
+npm run meetings:sync -- [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | List files without processing |
+| `--limit N` | Process only newest N files |
+| `--whisper-only` | Only whisper memo recordings |
+| `--meetings-only` | Only meeting recordings |
+| `--language CODE` | Whisper language hint (e.g., `en`, `zh`) |
+| `--storage <dir>` | Override storage directory |
+| `--state-file <path>` | Override sync state file |
+
+## USB Watcher Flags
+
+```bash
+npm run usb:watch -- [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--interval-ms N` | Poll interval (default: 5000) |
+| `--no-auto-sync` | Watch-only, no sync on plug-in |
+| `--no-emit-on-startup` | Skip notification if already connected |
+| `--sync-debounce-ms N` | Debounce window (default: 1500) |
+| `--no-slack-forward` | Disable Slack forwarding |
+| `--slack-target ID` | Slack DM target for notifications |
+
+## Storage Layout
+
+Notes are organized by age into tiered storage:
+
+```
+<storage>/
+  meetingindex.md              # Master meeting index
+  whisperindex.md              # Master whisper memo index
+  meetings/
+    hotmem/YYYYMM/            # 0-30 days
+    warmmem/YYYYMM/           # 31-180 days
+    coldmem/YYYYMM/           # 181+ days
+  whispers/
+    hotmem/                    # Recent memos
+    warmmem/                   # Older memos
+    coldmem/                   # Archived memos
+```
+
+Each note is a Markdown file with Summary and Transcript sections. Audio files (`.mp3` or `.wav`) are saved alongside each note for in-browser playback.
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENAI_API_KEY` | **Required.** OpenAI API key | — |
+| `MEETING_STORAGE_DIR` | Notes storage root | (compiled-in) |
+| `WHISPER_MODEL` | Whisper model ID | `whisper-1` |
+| `SUMMARY_MODEL` | Summary model ID | `gpt-4o-mini` |
+| `WHISPER_LANGUAGE` | Language hint | (auto-detect) |
+| `HIDOCK_NOTES_BACKEND` | `local` or `memdock` | `local` |
+| `HIDOCK_NOTES_TIER_HOT_MAX_DAYS` | Hot tier max age | `30` |
+| `HIDOCK_NOTES_TIER_WARM_MAX_DAYS` | Warm tier max age | `180` |
+
+## AI Agent Integration
+
+HiDockSkill works with both **Claude Code** and **OpenClaw** via the companion skill repo:
+
+```bash
+# Claude Code
+git clone https://github.com/build-hidock/HiDockSkill-Claude ~/.claude/skills/hidock-skill
+
+# OpenClaw
+ln -s /path/to/HiDockSkill-Claude ~/.openclaw/skills/hidock-skill
+```
+
+Then just say "HiDock" to open the galaxy dashboard, or "sync HiDock" to sync recordings.
+
+## Source Types
+
+HiDock filenames encode the recording type (e.g., `2026Feb21-132825-Rec00.hda`):
+
+| Type | Pattern | Color |
+|------|---------|-------|
+| Meeting | `Rec` | Blue |
+| WIP | `Wip` | Green |
+| Room | `Room` | Amber |
+| Call | `Call` | Red |
+| Whisper | `Whsp` | Purple |
+
+## Troubleshooting
+
+### `LIBUSB_ERROR_ACCESS`
+Another app holds the USB device. Close HiNotes web/browser, kill stale processes:
+```bash
+pkill -f "usb:watch"
+pkill -f "meetings:sync"
+```
+
+### `OPENAI_API_KEY is required`
+```bash
+echo "OPENAI_API_KEY=sk-..." > .env
+```
+
+### Device not found
+Ensure HiDock P1 is connected via USB. On macOS, check System Information > USB.
 
 ## License
-MIT License – see [LICENSE](LICENSE) for details.
+
+MIT — see [LICENSE](LICENSE)
