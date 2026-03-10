@@ -13,11 +13,12 @@ export function startGalaxyServer(options) {
         const server = http.createServer((req, res) => {
             const url = new URL(req.url ?? "/", `http://${host}:${port}`);
             const pathname = url.pathname;
-            if (req.method !== "GET") {
+            if (req.method !== "GET" && req.method !== "HEAD") {
                 res.writeHead(405, { "Content-Type": "text/plain" });
                 res.end("Method Not Allowed");
                 return;
             }
+            const isHead = req.method === "HEAD";
             if (pathname === "/") {
                 const html = renderGalaxyHtml(graphData);
                 res.writeHead(200, {
@@ -51,6 +52,51 @@ export function startGalaxyServer(options) {
                 });
                 res.end(json);
                 log(`GET /data.json -> 200 (${json.length} bytes)`);
+                return;
+            }
+            if (pathname === "/audio") {
+                const nodeId = url.searchParams.get("id");
+                if (!nodeId || !graphData) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Not Found");
+                    return;
+                }
+                const audioNode = graphData.nodes.find((n) => n.id === nodeId);
+                if (!audioNode) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Node not found");
+                    return;
+                }
+                // Try .mp3 then .wav alongside the note
+                const mp3Path = audioNode.notePath.replace(/\.md$/, ".mp3");
+                const wavPath = audioNode.notePath.replace(/\.md$/, ".wav");
+                const tryServeAudio = (audioPath, mimeType) => {
+                    fs.stat(audioPath)
+                        .then((stat) => {
+                        res.writeHead(200, {
+                            "Content-Type": mimeType,
+                            "Content-Length": stat.size.toString(),
+                            "Cache-Control": "no-cache",
+                        });
+                        if (isHead) {
+                            res.end();
+                        }
+                        else {
+                            fs.readFile(audioPath).then((data) => res.end(data));
+                        }
+                        log(`${req.method} /audio -> 200 (${audioPath})`);
+                    })
+                        .catch(() => {
+                        if (audioPath === mp3Path) {
+                            tryServeAudio(wavPath, "audio/wav");
+                        }
+                        else {
+                            res.writeHead(404, { "Content-Type": "text/plain" });
+                            res.end();
+                        }
+                    });
+                };
+                tryServeAudio(mp3Path, "audio/mpeg");
                 return;
             }
             if (pathname === "/note") {

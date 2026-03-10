@@ -30,6 +30,8 @@ export class HiDockWhisperSkill {
             fileName: file.fileName,
             fileSize: file.fileSize,
             fileVersion: file.fileVersion,
+            audioBytes,
+            audioCodec: file.audioProfile?.codec ?? "mp3",
         };
     }
     async transcribeLatestFile(onProgress) {

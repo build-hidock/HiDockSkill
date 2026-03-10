@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+
 import OpenAI from "openai";
 
 import { HiDockClient } from "./client.js";
@@ -98,6 +100,13 @@ export class HiDockMeetingWorkflow {
     const saved: SavedMeetingDocument = documentType === "whisper"
       ? await this.storage.saveWhisper(normalized)
       : await this.storage.saveMeeting(normalized);
+
+    // Save audio file alongside the note for playback
+    if (!saved.skipped && transcription.audioBytes.length > 0) {
+      const ext = transcription.audioCodec === "wav" ? ".wav" : ".mp3";
+      const audioPath = saved.notePath.replace(/\.md$/, ext);
+      await fs.writeFile(audioPath, transcription.audioBytes);
+    }
 
     return {
       sourceFileName: file.fileName,

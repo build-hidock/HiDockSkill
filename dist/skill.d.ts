@@ -12,6 +12,8 @@ export interface FileTranscriptionResult extends WhisperTranscriptionOutput {
     fileName: string;
     fileSize: number;
     fileVersion: number;
+    audioBytes: Uint8Array;
+    audioCodec: "mp3" | "wav";
 }
 export declare class HiDockWhisperSkill {
     private readonly client;

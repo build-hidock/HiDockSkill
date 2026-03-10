@@ -179,7 +179,7 @@ export function renderGalaxyHtml(data) {
   #galaxy-svg {
     position: fixed;
     top: 48px; left: 0;
-    width: calc(100vw - 280px);
+    width: calc(100vw - 560px);
     height: calc(100vh - 48px);
   }
 
@@ -208,119 +208,197 @@ export function renderGalaxyHtml(data) {
   #tooltip .tt-date { color: var(--text-secondary); font-size: 11px; }
   #tooltip .tt-brief { color: var(--purple-lighter); margin-top: 4px; }
 
-  /* ---------- detail panel ---------- */
-  #detail-panel {
+  /* ---------- note popup modal ---------- */
+  #note-overlay {
     position: fixed;
-    top: 48px; right: 0;
-    width: 320px;
-    height: calc(100vh - 48px);
-    background: var(--panel-bg);
-    border-left: 1px solid rgba(168,85,247,0.15);
-    backdrop-filter: blur(12px);
-    padding: 24px 20px;
-    overflow-y: auto;
-    transform: translateX(100%);
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(5, 0, 15, 0.75);
+    backdrop-filter: blur(8px);
+    z-index: 300;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  #note-overlay.open { display: flex; opacity: 1; }
+
+  #note-modal {
+    width: 900px;
+    max-width: 94vw;
+    max-height: 92vh;
+    background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
+    border: 1px solid rgba(168,85,247,0.2);
+    border-radius: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 60px rgba(168,85,247,0.08);
+    transform: scale(0.95) translateY(10px);
     transition: transform 0.25s ease;
-    z-index: 150;
   }
-  #detail-panel.open { transform: translateX(0); }
-  #detail-panel .close-btn {
-    position: absolute;
-    top: 12px; right: 14px;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 22px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 4px;
-    transition: color 0.15s;
+  #note-overlay.open #note-modal {
+    transform: scale(1) translateY(0);
   }
-  #detail-panel .close-btn:hover { color: var(--text-primary); }
-  #detail-panel h2 {
-    font-size: 16px;
+
+  .modal-header {
+    padding: 24px 28px 16px;
+    border-bottom: 1px solid rgba(168,85,247,0.1);
+    position: relative;
+  }
+  .modal-header h2 {
+    font-size: 20px;
     font-weight: 600;
     color: var(--text-primary);
-    margin-bottom: 16px;
-    padding-right: 28px;
+    margin: 0 0 10px;
+    padding-right: 36px;
     line-height: 1.35;
   }
-  .detail-row { margin-bottom: 12px; }
-  .detail-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-    margin-bottom: 2px;
-  }
-  .detail-value {
-    font-size: 13px;
-    color: var(--purple-lighter);
-    line-height: 1.5;
-  }
-  .detail-attendees {
+  .modal-meta {
     display: flex;
+    align-items: center;
+    gap: 12px;
     flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 4px;
+  }
+  .modal-meta-item {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .modal-meta-item .meta-icon { font-size: 13px; opacity: 0.7; }
+  .modal-close {
+    position: absolute;
+    top: 18px; right: 20px;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    border: 1px solid rgba(168,85,247,0.15);
+    background: rgba(168,85,247,0.06);
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  .modal-close:hover {
+    background: rgba(168,85,247,0.15);
+    color: var(--text-primary);
+    border-color: rgba(168,85,247,0.3);
   }
   .attendee-tag {
     background: rgba(168,85,247,0.1);
     border: 1px solid rgba(168,85,247,0.2);
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 12px;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 11px;
     color: var(--purple-lighter);
   }
   .tier-badge {
     display: inline-block;
     padding: 2px 10px;
     border-radius: 10px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
   }
-  .tier-badge.hotmem  { background: rgba(168,85,247,0.15);  color: var(--color-hot); }
-  .tier-badge.warmmem { background: rgba(124,58,237,0.15);  color: var(--color-warm); }
-  .tier-badge.coldmem { background: rgba(67,56,202,0.15);   color: var(--color-cold); }
+  .tier-badge.hotmem  { background: rgba(168,85,247,0.15); color: var(--color-hot); }
+  .tier-badge.warmmem { background: rgba(124,58,237,0.15); color: var(--color-warm); }
+  .tier-badge.coldmem { background: rgba(67,56,202,0.15);  color: var(--color-cold); }
 
-  /* ---------- note content in detail panel ---------- */
-  .note-section { margin-top: 16px; }
-  .note-section h3 {
-    font-size: 12px;
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 28px 24px;
+  }
+
+  /* Audio player */
+  .audio-section {
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(168,85,247,0.04);
+    border: 1px solid rgba(168,85,247,0.1);
+    border-radius: 12px;
+  }
+  .audio-section-label {
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
+    letter-spacing: 1px;
     color: var(--text-dim);
-    margin-bottom: 6px;
+    margin-bottom: 10px;
+  }
+  .audio-player audio {
+    width: 100%;
+    height: 40px;
+    border-radius: 8px;
+    outline: none;
+  }
+  .audio-unavailable {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 6px 0;
+  }
+
+  /* Summary & Transcript sections */
+  .note-section {
+    margin-top: 20px;
+  }
+  .note-section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  .note-section h3 .icon { font-size: 14px; }
-  .note-content {
-    font-size: 13px;
+  .note-section-label .sec-icon { font-size: 13px; }
+  .note-text {
+    font-size: 14px;
     color: var(--purple-lighter);
-    line-height: 1.6;
+    line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 300px;
-    overflow-y: auto;
-    padding: 8px 10px;
-    background: rgba(168,85,247,0.05);
-    border-radius: 6px;
-    border: 1px solid rgba(168,85,247,0.1);
   }
-  .note-loading {
+  .note-text.summary-text {
+    font-size: 15px;
+    color: var(--text-primary);
+    line-height: 1.65;
+    padding: 14px 16px;
+    background: rgba(168,85,247,0.06);
+    border-radius: 10px;
+    border: 1px solid rgba(168,85,247,0.08);
+  }
+  .note-text.transcript-text {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 14px 16px;
+    background: rgba(13,1,23,0.5);
+    border-radius: 10px;
+    border: 1px solid rgba(168,85,247,0.06);
+    font-size: 13px;
+    color: var(--purple-lighter);
+  }
+  .note-text.transcript-text::-webkit-scrollbar { width: 4px; }
+  .note-text.transcript-text::-webkit-scrollbar-track { background: transparent; }
+  .note-text.transcript-text::-webkit-scrollbar-thumb {
+    background: rgba(168,85,247,0.2);
+    border-radius: 2px;
+  }
+  .note-loading-text {
     color: var(--text-dim);
     font-style: italic;
-    font-size: 12px;
-    padding: 8px 0;
+    font-size: 13px;
   }
 
   /* ---------- insights sidebar ---------- */
   #insights-panel {
     position: fixed;
     top: 48px; right: 0;
-    width: 280px;
+    width: 560px;
     height: calc(100vh - 48px);
     background: var(--panel-bg);
     border-left: 1px solid rgba(168,85,247,0.15);
@@ -506,40 +584,32 @@ export function renderGalaxyHtml(data) {
   <div class="tt-brief"></div>
 </div>
 
-<div id="detail-panel">
-  <button class="close-btn" onclick="closePanel()">&times;</button>
-  <h2 id="dp-title"></h2>
-  <div class="detail-row">
-    <div class="detail-label">Date</div>
-    <div class="detail-value" id="dp-date"></div>
-  </div>
-  <div class="detail-row">
-    <div class="detail-label">Attendees</div>
-    <div class="detail-attendees" id="dp-attendees"></div>
-  </div>
-  <div class="detail-row">
-    <div class="detail-label">Brief</div>
-    <div class="detail-value" id="dp-brief"></div>
-  </div>
-  <div class="detail-row">
-    <div class="detail-label">Kind</div>
-    <div class="detail-value" id="dp-kind"></div>
-  </div>
-  <div class="detail-row">
-    <div class="detail-label">Tier</div>
-    <div class="detail-value" id="dp-tier"></div>
-  </div>
-  <div class="detail-row">
-    <div class="detail-label">Source</div>
-    <div class="detail-value" id="dp-source" style="word-break:break-all;"></div>
-  </div>
-  <div class="note-section" id="dp-note-section">
-    <h3><span class="icon">&#x1f4dd;</span> Summary</h3>
-    <div class="note-content" id="dp-summary"></div>
-  </div>
-  <div class="note-section">
-    <h3><span class="icon">&#x1f399;</span> Transcript</h3>
-    <div class="note-content" id="dp-transcript" style="max-height:400px;"></div>
+<div id="note-overlay">
+  <div id="note-modal">
+    <div class="modal-header">
+      <button class="modal-close" onclick="closeNoteModal()">&times;</button>
+      <h2 id="nm-title"></h2>
+      <div class="modal-meta">
+        <span class="modal-meta-item"><span class="meta-icon">&#x1f4c5;</span> <span id="nm-date"></span></span>
+        <span id="nm-tier"></span>
+        <span class="modal-meta-item" id="nm-kind-wrap"><span class="meta-icon">&#x1f3a4;</span> <span id="nm-kind"></span></span>
+      </div>
+      <div class="modal-meta" style="margin-top:8px;" id="nm-attendees-wrap"></div>
+    </div>
+    <div class="modal-body">
+      <div class="audio-section" id="nm-audio-section">
+        <div class="audio-section-label">&#x1f50a; Audio Recording</div>
+        <div class="audio-player" id="nm-audio-player"></div>
+      </div>
+      <div class="note-section">
+        <div class="note-section-label"><span class="sec-icon">&#x2728;</span> Summary</div>
+        <div class="note-text summary-text" id="nm-summary"></div>
+      </div>
+      <div class="note-section">
+        <div class="note-section-label"><span class="sec-icon">&#x1f399;</span> Transcript</div>
+        <div class="note-text transcript-text" id="nm-transcript"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -747,7 +817,7 @@ export function renderGalaxyHtml(data) {
     var edges = data.edges.map(function(e) { return { source: e.source, target: e.target, type: e.type, weight: e.weight }; });
 
     var svg = d3.select("#galaxy-svg");
-    var INSIGHTS_WIDTH = 280;
+    var INSIGHTS_WIDTH = 560;
     var width  = window.innerWidth - INSIGHTS_WIDTH;
     var height = window.innerHeight - 48;
     svg.attr("width", width).attr("height", height);
@@ -918,60 +988,92 @@ export function renderGalaxyHtml(data) {
       })
       .on("mouseleave", function() { tooltip.classed("visible", false); });
 
-    // Detail panel
+    // Note modal
     nodeElements.on("click", function(event, d) {
       event.stopPropagation();
-      showPanel(d);
+      openNoteModal(d);
     });
-    svg.on("click", function() { closePanel(); });
 
-    function showPanel(d) {
-      document.getElementById("dp-title").textContent = d.title;
-      document.getElementById("dp-date").textContent = d.dateTime;
-      document.getElementById("dp-brief").textContent = d.brief;
-      document.getElementById("dp-kind").textContent = d.kind + " (" + (d.sourceType || "rec") + ")";
-      document.getElementById("dp-source").textContent = d.source;
-      var tierEl = document.getElementById("dp-tier");
-      tierEl.innerHTML = '<span class="tier-badge ' + d.tier + '">' + d.tier + '</span>';
-      var attEl = document.getElementById("dp-attendees");
-      attEl.innerHTML = "";
+    function openNoteModal(d) {
+      document.getElementById("nm-title").textContent = d.title;
+      document.getElementById("nm-date").textContent = d.dateTime;
+      document.getElementById("nm-kind").textContent = d.kind + " (" + (d.sourceType || "rec") + ")";
+      document.getElementById("nm-tier").innerHTML = '<span class="tier-badge ' + d.tier + '">' + d.tier + '</span>';
+
+      var attWrap = document.getElementById("nm-attendees-wrap");
+      attWrap.innerHTML = "";
       (d.attendees || []).forEach(function(a) {
         var tag = document.createElement("span");
         tag.className = "attendee-tag";
         tag.textContent = a;
-        attEl.appendChild(tag);
+        attWrap.appendChild(tag);
       });
 
+      // Audio player
+      var audioPlayer = document.getElementById("nm-audio-player");
+      audioPlayer.innerHTML = '<div class="audio-unavailable">Checking audio...</div>';
+      fetch("/audio?id=" + encodeURIComponent(d.id), { method: "HEAD" })
+        .then(function(res) {
+          if (res.ok) {
+            audioPlayer.innerHTML = '<audio controls preload="auto" src="/audio?id=' + encodeURIComponent(d.id) + '"></audio>';
+          } else {
+            audioPlayer.innerHTML = '<div class="audio-unavailable">Audio not available for this recording</div>';
+          }
+        })
+        .catch(function() {
+          audioPlayer.innerHTML = '<div class="audio-unavailable">Audio not available</div>';
+        });
+
       // Fetch note content
-      var summaryEl = document.getElementById("dp-summary");
-      var transcriptEl = document.getElementById("dp-transcript");
-      summaryEl.textContent = "Loading...";
-      summaryEl.className = "note-content note-loading";
+      var summaryEl = document.getElementById("nm-summary");
+      var transcriptEl = document.getElementById("nm-transcript");
+      summaryEl.innerHTML = '<span class="note-loading-text">Loading...</span>';
       transcriptEl.textContent = "";
 
       fetch("/note?id=" + encodeURIComponent(d.id))
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(note) {
           if (note) {
-            summaryEl.className = "note-content";
             summaryEl.textContent = note.summary || "(no summary)";
             transcriptEl.textContent = note.transcript || "(no transcript)";
           } else {
-            summaryEl.className = "note-content";
             summaryEl.textContent = "(unable to load)";
           }
         })
         .catch(function() {
-          summaryEl.className = "note-content";
           summaryEl.textContent = "(unable to load)";
         });
 
-      d3.select("#detail-panel").classed("open", true);
+      // Show modal with animation
+      var overlay = document.getElementById("note-overlay");
+      overlay.style.display = "flex";
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          overlay.classList.add("open");
+        });
+      });
     }
 
-    window.closePanel = function() {
-      d3.select("#detail-panel").classed("open", false);
+    window.closeNoteModal = function() {
+      var overlay = document.getElementById("note-overlay");
+      overlay.classList.remove("open");
+      setTimeout(function() {
+        overlay.style.display = "none";
+        // Stop audio if playing
+        var audio = overlay.querySelector("audio");
+        if (audio) { audio.pause(); }
+      }, 250);
     };
+
+    // Close on overlay click (not modal content)
+    document.getElementById("note-overlay").addEventListener("click", function(e) {
+      if (e.target === this) { closeNoteModal(); }
+    });
+
+    // Close on Escape key
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") { closeNoteModal(); }
+    });
 
     // Force simulation
     var simulation = d3.forceSimulation(nodes)

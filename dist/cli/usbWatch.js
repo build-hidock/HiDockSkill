@@ -423,6 +423,7 @@ async function updateGalaxyWithData(options) {
     }
 }
 const HIDOCK_NOTIFIER_BIN = new URL("../../HiDockNotifier.app/Contents/MacOS/terminal-notifier", import.meta.url);
+const HIDOCK_ICON = new URL("../../assets/hidock-icon.png", import.meta.url);
 function sendDesktopNotification(title, message, log) {
     if (platform() !== "darwin") {
         return;
@@ -431,10 +432,8 @@ function sendDesktopNotification(title, message, log) {
         log(`[notify] sending: "${title}" — "${message}"`);
     }
     const notifierPath = HIDOCK_NOTIFIER_BIN.pathname;
-    if (log) {
-        log(`[notify] using: ${notifierPath}`);
-    }
-    execFile(notifierPath, ["-title", title, "-message", message, "-timeout", "5"], { timeout: 8000 }, (error) => {
+    const iconPath = HIDOCK_ICON.pathname;
+    execFile(notifierPath, ["-title", title, "-message", message, "-appIcon", iconPath, "-timeout", "5"], { timeout: 8000 }, (error) => {
         if (error && log) {
             log(`[notify] error: ${toErrorMessage(error)}`);
         }
