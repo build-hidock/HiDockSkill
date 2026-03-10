@@ -16,6 +16,7 @@ export interface GalaxyNode {
   source: string;
   tier: StorageTier;
   kind: DocumentKind;
+  sourceType: string; // "rec" | "wip" | "room" | "call" | "whsp"
   isNew: boolean;
   notePath: string; // full path to .md file
 }
@@ -27,9 +28,25 @@ export interface GalaxyEdge {
   weight: number;
 }
 
+export interface GalaxyInsightItem {
+  text: string;
+  noteTitle: string;
+  noteDate: string;
+  noteId: string;
+}
+
+export interface GalaxyInsights {
+  todos: GalaxyInsightItem[];
+  reminders: GalaxyInsightItem[];
+  achievements: GalaxyInsightItem[];
+  suggestions: GalaxyInsightItem[];
+  topTopics: { topic: string; count: number }[];
+}
+
 export interface GalaxyGraphData {
   nodes: GalaxyNode[];
   edges: GalaxyEdge[];
+  insights: GalaxyInsights;
   generatedAt: string;
 }
 
@@ -402,6 +419,133 @@ function buildSameDayEdges(nodes: GalaxyNode[]): GalaxyEdge[] {
 }
 
 // ---------------------------------------------------------------------------
+// Source type detection from filename
+// ---------------------------------------------------------------------------
+
+/** Detect recording source type from the source filename. */
+export function detectSourceType(source: string): string {
+  const name = source.toLowerCase();
+  if (/[-_]rec\d/i.test(name) || name.startsWith("rec")) return "rec";
+  if (/[-_]wip\d/i.test(name) || name.startsWith("wip")) return "wip";
+  if (/[-_]room\d/i.test(name) || name.startsWith("room")) return "room";
+  if (/[-_]call\d/i.test(name) || name.startsWith("call")) return "call";
+  if (/whsp/i.test(name)) return "whsp";
+  return "rec";
+}
+
+// ---------------------------------------------------------------------------
+// Insight extraction from note summaries
+// ---------------------------------------------------------------------------
+
+async function readNoteSummary(notePath: string): Promise<string> {
+  try {
+    const content = await fs.readFile(notePath, "utf8");
+    const match = content.match(/## Summary\n([\s\S]*?)(?=\n## |\n#\s|$)/);
+    return match?.[1]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+type InsightType = "todo" | "reminder" | "achievement" | "suggestion";
+
+function categorizeInsight(text: string): InsightType | null {
+  const lower = text.toLowerCase();
+  if (
+    /\b(need to|needs to|should|plan to|planning to|will\s|todo|to.do|action item|follow.?up|next step|must|待办|需要|计划|해야)\b/.test(
+      lower,
+    )
+  )
+    return "todo";
+  if (
+    /\b(completed?|achieved?|launched|delivered|finished|resolved|fixed|shipped|implemented|deployed|released|approved|完成|实现|达成|출시)\b/.test(
+      lower,
+    )
+  )
+    return "achievement";
+  if (
+    /\b(deadline|due\b|by (monday|tuesday|wednesday|thursday|friday|tomorrow|next)|remind|don't forget|remember to|important|截止|提醒|记住|마감)\b/.test(
+      lower,
+    )
+  )
+    return "reminder";
+  if (
+    /\b(could|might want|consider|suggest|recommend|idea|opportunity|potential|improve|optimize|建议|考虑|可以|改进|제안)\b/.test(
+      lower,
+    )
+  )
+    return "suggestion";
+  return null;
+}
+
+async function buildInsights(nodes: GalaxyNode[]): Promise<GalaxyInsights> {
+  const hotNodes = nodes.filter((n) => n.tier === "hotmem");
+
+  const summaryResults = await Promise.all(
+    hotNodes.map(async (node) => ({
+      node,
+      summary: await readNoteSummary(node.notePath),
+    })),
+  );
+
+  const todos: GalaxyInsightItem[] = [];
+  const reminders: GalaxyInsightItem[] = [];
+  const achievements: GalaxyInsightItem[] = [];
+  const suggestions: GalaxyInsightItem[] = [];
+
+  for (const { node, summary } of summaryResults) {
+    if (!summary) continue;
+    // Split by sentence-ending punctuation (English + CJK)
+    const sentences = summary
+      .split(/[.!?。！？]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 5);
+    for (const sentence of sentences) {
+      const type = categorizeInsight(sentence);
+      if (!type) continue;
+      const item: GalaxyInsightItem = {
+        text: sentence,
+        noteTitle: node.title,
+        noteDate: node.dateTime,
+        noteId: node.id,
+      };
+      switch (type) {
+        case "todo":
+          todos.push(item);
+          break;
+        case "reminder":
+          reminders.push(item);
+          break;
+        case "achievement":
+          achievements.push(item);
+          break;
+        case "suggestion":
+          suggestions.push(item);
+          break;
+      }
+    }
+  }
+
+  // Top recurring topics from entity extraction across hot nodes
+  const tokenCounts = new Map<string, number>();
+  for (const node of hotNodes) {
+    const tokens = extractEntityTokens(`${node.title} ${node.brief}`);
+    const unique = new Set(tokens);
+    for (const t of unique) {
+      tokenCounts.set(t, (tokenCounts.get(t) ?? 0) + 1);
+    }
+  }
+
+  const topTopics = [...tokenCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([topic, count]) => ({ topic, count }));
+
+  return { todos, reminders, achievements, suggestions, topTopics };
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -444,6 +588,7 @@ export async function buildGalaxyData(options: {
       source: entry.source,
       tier: extractTier(entry.notePath),
       kind: "meeting",
+      sourceType: detectSourceType(entry.source),
       isNew: newSourceSet.has(entry.source),
       notePath: path.join(storageDir, entry.notePath),
     });
@@ -462,6 +607,7 @@ export async function buildGalaxyData(options: {
       source: entry.source,
       tier: extractTier(entry.notePath),
       kind: "whisper",
+      sourceType: detectSourceType(entry.source),
       isNew: newSourceSet.has(entry.source),
       notePath: path.join(storageDir, entry.notePath),
     });
@@ -473,9 +619,13 @@ export async function buildGalaxyData(options: {
   const seriesEdges = buildSeriesEdges(nodes);
   const projectEdges = buildProjectEdges(nodes);
 
+  // Build insights from hot memory notes
+  const insights = await buildInsights(nodes);
+
   return {
     nodes,
     edges: [...seriesEdges, ...projectEdges, ...attendeeEdges, ...sameDayEdges],
+    insights,
     generatedAt: new Date().toISOString(),
   };
 }

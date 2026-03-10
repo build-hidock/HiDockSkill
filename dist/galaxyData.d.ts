@@ -8,6 +8,7 @@ export interface GalaxyNode {
     source: string;
     tier: StorageTier;
     kind: DocumentKind;
+    sourceType: string;
     isNew: boolean;
     notePath: string;
 }
@@ -17,9 +18,26 @@ export interface GalaxyEdge {
     type: "attendee" | "sameDay" | "series" | "project";
     weight: number;
 }
+export interface GalaxyInsightItem {
+    text: string;
+    noteTitle: string;
+    noteDate: string;
+    noteId: string;
+}
+export interface GalaxyInsights {
+    todos: GalaxyInsightItem[];
+    reminders: GalaxyInsightItem[];
+    achievements: GalaxyInsightItem[];
+    suggestions: GalaxyInsightItem[];
+    topTopics: {
+        topic: string;
+        count: number;
+    }[];
+}
 export interface GalaxyGraphData {
     nodes: GalaxyNode[];
     edges: GalaxyEdge[];
+    insights: GalaxyInsights;
     generatedAt: string;
 }
 /** Extract a field value from a pipe-delimited index line. */
@@ -61,6 +79,8 @@ export declare function isGenericTitle(title: string): boolean;
  * Handles both Latin words and CJK bigrams.
  */
 export declare function extractEntityTokens(text: string): string[];
+/** Detect recording source type from the source filename. */
+export declare function detectSourceType(source: string): string;
 export declare function buildGalaxyData(options: {
     storageDir: string;
     newlySyncedSources?: string[];

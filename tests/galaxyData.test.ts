@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGalaxyData,
+  detectSourceType,
   extractField,
   extractKeywords,
   extractTier,
@@ -236,6 +237,43 @@ describe("extractEntityTokens", () => {
 // ---------------------------------------------------------------------------
 // buildGalaxyData — integration-level tests using temp dirs
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// detectSourceType
+// ---------------------------------------------------------------------------
+
+describe("detectSourceType", () => {
+  it("detects Rec in HiDock filename format", () => {
+    expect(detectSourceType("2026Feb21-132825-Rec00.hda")).toBe("rec");
+    expect(detectSourceType("2025Sep01-183309-Rec02.hda")).toBe("rec");
+    expect(detectSourceType("Rec_20260101_100000.mp3")).toBe("rec");
+  });
+
+  it("detects Wip in HiDock filename format", () => {
+    expect(detectSourceType("2025Jul15-042710-Wip00.hda")).toBe("wip");
+    expect(detectSourceType("2025Aug12-190705-Wip01.hda")).toBe("wip");
+    expect(detectSourceType("Wip_20260101_100000.mp3")).toBe("wip");
+  });
+
+  it("detects Room in HiDock filename format", () => {
+    expect(detectSourceType("2025Sep12-095449-Room00.hda")).toBe("room");
+    expect(detectSourceType("Room_20260101_100000.mp3")).toBe("room");
+  });
+
+  it("detects Call in HiDock filename format", () => {
+    expect(detectSourceType("2025Sep04-190126-Call00.hda")).toBe("call");
+    expect(detectSourceType("Call_20260101_100000.mp3")).toBe("call");
+  });
+
+  it("detects Whsp in HiDock filename format", () => {
+    expect(detectSourceType("2026Jan01-100000-Whsp00.hda")).toBe("whsp");
+    expect(detectSourceType("Whsp_20260101_100000.mp3")).toBe("whsp");
+  });
+
+  it("defaults to rec for unknown patterns", () => {
+    expect(detectSourceType("unknown_file.mp3")).toBe("rec");
+  });
+});
 
 async function makeTempStorage(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "hidock-galaxy-"));
@@ -490,6 +528,53 @@ describe("buildGalaxyData", () => {
     for (const count of edgeCounts.values()) {
       expect(count).toBeLessThanOrEqual(5);
     }
+  });
+
+  it("populates sourceType and insights on graph", async () => {
+    const dir = await makeTempStorage();
+    const meetingContent =
+      "# Meeting Index\n\n" +
+      "- DateTime: 2026-01-01 10:00:00 | Title: Standup | Attendee: Alice | " +
+      "Brief: Daily standup. | Source: Rec_20260101_100000.mp3 | Note: meetings/hotmem/202601/m.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), meetingContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    expect(graph.nodes[0]!.sourceType).toBe("rec");
+    expect(graph.insights).toBeDefined();
+    expect(graph.insights.topTopics).toBeInstanceOf(Array);
+    expect(graph.insights.todos).toBeInstanceOf(Array);
+  });
+
+  it("extracts insights from hotmem note summaries", async () => {
+    const dir = await makeTempStorage();
+    // Create note file with summary containing actionable items
+    const noteDir = path.join(dir, "meetings", "hotmem", "202601");
+    await fs.mkdir(noteDir, { recursive: true });
+    await fs.writeFile(
+      path.join(noteDir, "m.md"),
+      "# Sprint Planning\n\n" +
+        "- DateTime: 2026-01-01 10:00:00\n" +
+        "- Attendee: Alice\n" +
+        "- Brief: Sprint planning.\n" +
+        "- Source: Rec_20260101_100000.mp3\n\n" +
+        "## Summary\n\n" +
+        "The team completed the migration to the new API. " +
+        "We need to plan testing for the next release. " +
+        "Consider improving the CI pipeline for faster builds.\n\n" +
+        "## Transcript\n\nRaw transcript here.\n",
+      "utf8",
+    );
+    const indexContent =
+      "# Meeting Index\n\n" +
+      "- DateTime: 2026-01-01 10:00:00 | Title: Sprint Planning | Attendee: Alice | " +
+      "Brief: Sprint planning. | Source: Rec_20260101_100000.mp3 | Note: meetings/hotmem/202601/m.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    // Should find achievement (completed), todo (need to), suggestion (consider)
+    expect(graph.insights.achievements.length).toBeGreaterThanOrEqual(1);
+    expect(graph.insights.todos.length).toBeGreaterThanOrEqual(1);
+    expect(graph.insights.suggestions.length).toBeGreaterThanOrEqual(1);
   });
 
   it("combines meeting and whisper entries in one graph", async () => {

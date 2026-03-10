@@ -26,6 +26,11 @@ export function renderGalaxyHtml(data) {
     --color-warm: #7c3aed;
     --color-cold: #4338ca;
     --color-new: #FFFFFF;
+    --src-rec: #3b82f6;
+    --src-wip: #22c55e;
+    --src-room: #f59e0b;
+    --src-call: #ef4444;
+    --src-whsp: #c084fc;
     --edge-series: #c084fc;
     --edge-project: #f59e0b;
     --edge-attendee: #22c55e;
@@ -174,7 +179,7 @@ export function renderGalaxyHtml(data) {
   #galaxy-svg {
     position: fixed;
     top: 48px; left: 0;
-    width: 100vw;
+    width: calc(100vw - 280px);
     height: calc(100vh - 48px);
   }
 
@@ -277,6 +282,132 @@ export function renderGalaxyHtml(data) {
   .tier-badge.hotmem  { background: rgba(168,85,247,0.15);  color: var(--color-hot); }
   .tier-badge.warmmem { background: rgba(124,58,237,0.15);  color: var(--color-warm); }
   .tier-badge.coldmem { background: rgba(67,56,202,0.15);   color: var(--color-cold); }
+
+  /* ---------- note content in detail panel ---------- */
+  .note-section { margin-top: 16px; }
+  .note-section h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .note-section h3 .icon { font-size: 14px; }
+  .note-content {
+    font-size: 13px;
+    color: var(--purple-lighter);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    background: rgba(168,85,247,0.05);
+    border-radius: 6px;
+    border: 1px solid rgba(168,85,247,0.1);
+  }
+  .note-loading {
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 12px;
+    padding: 8px 0;
+  }
+
+  /* ---------- insights sidebar ---------- */
+  #insights-panel {
+    position: fixed;
+    top: 48px; right: 0;
+    width: 280px;
+    height: calc(100vh - 48px);
+    background: var(--panel-bg);
+    border-left: 1px solid rgba(168,85,247,0.15);
+    backdrop-filter: blur(12px);
+    padding: 20px 16px;
+    overflow-y: auto;
+    z-index: 140;
+    display: none;
+  }
+  #insights-panel h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .insight-category {
+    margin-bottom: 16px;
+  }
+  .insight-category-header {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .insight-category-header .cat-icon { font-size: 14px; }
+  .insight-category-header .cat-count {
+    margin-left: auto;
+    background: rgba(168,85,247,0.15);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-size: 10px;
+  }
+  .insight-item {
+    font-size: 12px;
+    color: var(--purple-lighter);
+    line-height: 1.5;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: rgba(168,85,247,0.05);
+    border-radius: 5px;
+    border-left: 2px solid transparent;
+    cursor: default;
+  }
+  .insight-item.todo { border-left-color: #f59e0b; }
+  .insight-item.reminder { border-left-color: #ef4444; }
+  .insight-item.achievement { border-left-color: #22c55e; }
+  .insight-item.suggestion { border-left-color: #3b82f6; }
+  .insight-item .insight-meta {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .topic-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .topic-tag {
+    background: rgba(168,85,247,0.1);
+    border: 1px solid rgba(168,85,247,0.2);
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: var(--purple-lighter);
+    white-space: nowrap;
+  }
+  .topic-tag .topic-count {
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: 4px;
+  }
+  .insights-empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 8px 0;
+  }
 
   /* ---------- legend ---------- */
   #legend {
@@ -402,6 +533,23 @@ export function renderGalaxyHtml(data) {
     <div class="detail-label">Source</div>
     <div class="detail-value" id="dp-source" style="word-break:break-all;"></div>
   </div>
+  <div class="note-section" id="dp-note-section">
+    <h3><span class="icon">&#x1f4dd;</span> Summary</h3>
+    <div class="note-content" id="dp-summary"></div>
+  </div>
+  <div class="note-section">
+    <h3><span class="icon">&#x1f399;</span> Transcript</h3>
+    <div class="note-content" id="dp-transcript" style="max-height:400px;"></div>
+  </div>
+</div>
+
+<div id="insights-panel">
+  <h2><span>&#x2728;</span> Hot Memory Analysis</h2>
+  <div id="insights-topics"></div>
+  <div id="insights-todos"></div>
+  <div id="insights-reminders"></div>
+  <div id="insights-achievements"></div>
+  <div id="insights-suggestions"></div>
 </div>
 
 <div id="legend" style="display:none;">
@@ -410,6 +558,12 @@ export function renderGalaxyHtml(data) {
   <div class="legend-item"><span class="legend-card" style="background:rgba(124,58,237,0.15); border:1px solid var(--color-warm);"></span> Warm</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(67,56,202,0.15); border:1px solid var(--color-cold);"></span> Cold (old)</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(168,85,247,0.4);"></span> New note</div>
+  <h3 style="margin-top:10px;">Source</h3>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-rec);"></span> Meeting</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-wip);"></span> WIP</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-room);"></span> Room</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-call);"></span> Call</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-whsp);"></span> Whisper</div>
   <h3 style="margin-top:10px;">Relationships</h3>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-series); height:3px;"></span> Same series</div>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-project);"></span> Same project/topic</div>
@@ -478,9 +632,70 @@ export function renderGalaxyHtml(data) {
     document.getElementById("header").style.display = "flex";
     document.getElementById("legend").style.display = "block";
     document.getElementById("galaxy-svg").style.display = "block";
+    document.getElementById("insights-panel").style.display = "block";
+
+    // Populate insights
+    renderInsights(data.insights);
 
     // Render galaxy
     setTimeout(function() { renderGalaxy(data); }, 100);
+  }
+
+  /* ====================================================================
+   * INSIGHTS RENDERER
+   * ==================================================================== */
+  function renderInsights(insights) {
+    if (!insights) return;
+
+    // Top topics
+    var topicsEl = document.getElementById("insights-topics");
+    if (insights.topTopics && insights.topTopics.length > 0) {
+      var topicsHtml = '<div class="insight-category">';
+      topicsHtml += '<div class="insight-category-header"><span class="cat-icon">&#x1f4ca;</span> Hot Topics</div>';
+      topicsHtml += '<div class="topic-cloud">';
+      insights.topTopics.forEach(function(t) {
+        topicsHtml += '<span class="topic-tag">' + escHtml(t.topic) + '<span class="topic-count">\\u00d7' + t.count + '</span></span>';
+      });
+      topicsHtml += '</div></div>';
+      topicsEl.innerHTML = topicsHtml;
+    }
+
+    // Render each insight category
+    var categories = [
+      { key: "todos",        el: "insights-todos",        icon: "&#x2705;", label: "Action Items" },
+      { key: "reminders",    el: "insights-reminders",    icon: "&#x23f0;", label: "Reminders" },
+      { key: "achievements", el: "insights-achievements", icon: "&#x1f3c6;", label: "Achievements" },
+      { key: "suggestions",  el: "insights-suggestions",  icon: "&#x1f4a1;", label: "Suggestions" },
+    ];
+
+    categories.forEach(function(cat) {
+      var items = insights[cat.key];
+      var el = document.getElementById(cat.el);
+      if (!items || items.length === 0) {
+        el.innerHTML = "";
+        return;
+      }
+      var html = '<div class="insight-category">';
+      html += '<div class="insight-category-header"><span class="cat-icon">' + cat.icon + '</span> ' + cat.label;
+      html += '<span class="cat-count">' + items.length + '</span></div>';
+      items.slice(0, 5).forEach(function(item) {
+        html += '<div class="insight-item ' + cat.key.slice(0, -1) + '">';
+        html += escHtml(item.text);
+        html += '<div class="insight-meta">' + escHtml(item.noteTitle) + ' \\u2014 ' + escHtml(item.noteDate.slice(0, 10)) + '</div>';
+        html += '</div>';
+      });
+      if (items.length > 5) {
+        html += '<div class="insight-item" style="color:var(--text-dim);font-style:italic;">+' + (items.length - 5) + ' more</div>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
+    });
+  }
+
+  function escHtml(text) {
+    var div = document.createElement("div");
+    div.textContent = text || "";
+    return div.innerHTML;
   }
 
   /* ====================================================================
@@ -503,6 +718,13 @@ export function renderGalaxyHtml(data) {
       sameDay:  "rgba(168,85,247,0.12)",
     };
     var NEW_COLOR = "#FFFFFF";
+    var SOURCE_TYPE_COLORS = {
+      rec:  "#3b82f6",
+      wip:  "#22c55e",
+      room: "#f59e0b",
+      call: "#ef4444",
+      whsp: "#c084fc",
+    };
 
     function truncate(text, maxLen) {
       if (!text) return "";
@@ -525,7 +747,8 @@ export function renderGalaxyHtml(data) {
     var edges = data.edges.map(function(e) { return { source: e.source, target: e.target, type: e.type, weight: e.weight }; });
 
     var svg = d3.select("#galaxy-svg");
-    var width  = window.innerWidth;
+    var INSIGHTS_WIDTH = 280;
+    var width  = window.innerWidth - INSIGHTS_WIDTH;
     var height = window.innerHeight - 48;
     svg.attr("width", width).attr("height", height);
 
@@ -634,13 +857,13 @@ export function renderGalaxyHtml(data) {
         .attr("stroke-width", d.isNew ? 1.8 : 0.8)
         .attr("stroke-opacity", d.isNew ? 1.0 : 0.6);
 
-      // Kind indicator dot
-      var kindColor = d.kind === "whisper" ? "#c084fc" : cfg.color;
+      // Source type indicator dot
+      var srcColor = SOURCE_TYPE_COLORS[d.sourceType] || SOURCE_TYPE_COLORS.rec;
       g.append("circle")
         .attr("cx", -w / 2 + 8).attr("cy", -h / 2 + 8)
-        .attr("r", 3)
-        .attr("fill", kindColor)
-        .attr("opacity", 0.8);
+        .attr("r", 3.5)
+        .attr("fill", srcColor)
+        .attr("opacity", 0.9);
 
       // Date
       g.append("text")
@@ -706,7 +929,7 @@ export function renderGalaxyHtml(data) {
       document.getElementById("dp-title").textContent = d.title;
       document.getElementById("dp-date").textContent = d.dateTime;
       document.getElementById("dp-brief").textContent = d.brief;
-      document.getElementById("dp-kind").textContent = d.kind;
+      document.getElementById("dp-kind").textContent = d.kind + " (" + (d.sourceType || "rec") + ")";
       document.getElementById("dp-source").textContent = d.source;
       var tierEl = document.getElementById("dp-tier");
       tierEl.innerHTML = '<span class="tier-badge ' + d.tier + '">' + d.tier + '</span>';
@@ -718,6 +941,31 @@ export function renderGalaxyHtml(data) {
         tag.textContent = a;
         attEl.appendChild(tag);
       });
+
+      // Fetch note content
+      var summaryEl = document.getElementById("dp-summary");
+      var transcriptEl = document.getElementById("dp-transcript");
+      summaryEl.textContent = "Loading...";
+      summaryEl.className = "note-content note-loading";
+      transcriptEl.textContent = "";
+
+      fetch("/note?id=" + encodeURIComponent(d.id))
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then(function(note) {
+          if (note) {
+            summaryEl.className = "note-content";
+            summaryEl.textContent = note.summary || "(no summary)";
+            transcriptEl.textContent = note.transcript || "(no transcript)";
+          } else {
+            summaryEl.className = "note-content";
+            summaryEl.textContent = "(unable to load)";
+          }
+        })
+        .catch(function() {
+          summaryEl.className = "note-content";
+          summaryEl.textContent = "(unable to load)";
+        });
+
       d3.select("#detail-panel").classed("open", true);
     }
 
@@ -764,7 +1012,7 @@ export function renderGalaxyHtml(data) {
 
     // Responsive
     window.addEventListener("resize", function() {
-      var w = window.innerWidth;
+      var w = window.innerWidth - INSIGHTS_WIDTH;
       var h = window.innerHeight - 48;
       svg.attr("width", w).attr("height", h);
       svg.select("rect").attr("width", w).attr("height", h);

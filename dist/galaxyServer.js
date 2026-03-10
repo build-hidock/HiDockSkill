@@ -1,4 +1,5 @@
 import http from "node:http";
+import { promises as fs } from "node:fs";
 import { renderGalaxyHtml } from "./galaxyHtml.js";
 const DEFAULT_PORT = 18180;
 const DEFAULT_HOST = "127.0.0.1";
@@ -50,6 +51,41 @@ export function startGalaxyServer(options) {
                 });
                 res.end(json);
                 log(`GET /data.json -> 200 (${json.length} bytes)`);
+                return;
+            }
+            if (pathname === "/note") {
+                const nodeId = url.searchParams.get("id");
+                if (!nodeId || !graphData) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Not Found");
+                    return;
+                }
+                const node = graphData.nodes.find((n) => n.id === nodeId);
+                if (!node) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Node not found");
+                    return;
+                }
+                fs.readFile(node.notePath, "utf8")
+                    .then((content) => {
+                    const summaryMatch = content.match(/## Summary\n([\s\S]*?)(?=\n## |\n#\s|$)/);
+                    const transcriptMatch = content.match(/## Transcript\n([\s\S]*?)$/);
+                    const noteJson = JSON.stringify({
+                        summary: summaryMatch?.[1]?.trim() ?? "",
+                        transcript: transcriptMatch?.[1]?.trim() ?? "",
+                    });
+                    res.writeHead(200, {
+                        "Content-Type": "application/json; charset=utf-8",
+                        "Cache-Control": "no-cache",
+                    });
+                    res.end(noteJson);
+                    log(`GET /note -> 200 (${node.notePath})`);
+                })
+                    .catch(() => {
+                    res.writeHead(500, { "Content-Type": "text/plain" });
+                    res.end("Error reading note");
+                    log(`GET /note -> 500 (${node.notePath})`);
+                });
                 return;
             }
             res.writeHead(404, { "Content-Type": "text/plain" });
