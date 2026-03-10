@@ -13,3 +13,6 @@ export * from "./notesStorage.js";
 export * from "./syncState.js";
 export * from "./syncCoordinator.js";
 export * from "./meetingWorkflow.js";
+export * from "./galaxyData.js";
+export * from "./galaxyServer.js";
+export * from "./galaxyHtml.js";

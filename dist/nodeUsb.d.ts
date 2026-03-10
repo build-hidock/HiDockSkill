@@ -32,5 +32,11 @@ export declare function createNodeWebUsb(): WebUSB;
 export declare function findHiDockNodeDevice(options?: NodeUsbDiscoveryOptions): Promise<UsbDeviceLike>;
 export declare function createNodeHiDockClient(transportOptions?: HiDockTransportOptions, discoveryOptions?: NodeUsbDiscoveryOptions): Promise<HiDockClient>;
 export declare function formatHiDockPluggedInPrompt(productName: string): string;
+/**
+ * Fast OS-level USB presence check using ioreg (macOS) or lsusb (Linux).
+ * Unlike WebUSB.getDevices(), this never caches or breaks after USB errors.
+ * Returns the product name if found, or null if not connected.
+ */
+export declare function detectHiDockPresence(): string | null;
 export declare function createHiDockConnectionMonitor(options?: HiDockConnectionMonitorOptions): HiDockConnectionMonitor;
 //# sourceMappingURL=nodeUsb.d.ts.map

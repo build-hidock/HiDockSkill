@@ -43,6 +43,7 @@ export interface SyncRunResult {
   saved: number;
   skipped: number;
   failed: number;
+  savedSources: string[];
 }
 
 interface RunMeetingsSyncOptions {
@@ -80,7 +81,7 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
 
     if (selected.length === 0) {
       logger.log("[HiDock Sync] no new files to process");
-      return { totalFiles: files.length, selectedFiles: 0, saved: 0, skipped: 0, failed: 0 };
+      return { totalFiles: files.length, selectedFiles: 0, saved: 0, skipped: 0, failed: 0, savedSources: [] };
     }
 
     if (options.dryRun) {
@@ -95,6 +96,7 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
         saved: 0,
         skipped: 0,
         failed: 0,
+        savedSources: [],
       };
     }
 
@@ -130,6 +132,7 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
     let saved = 0;
     let skipped = 0;
     let failed = 0;
+    const savedSources: string[] = [];
     const processedForState: HiDockFileEntry[] = [];
 
     for (const [index, file] of selected.entries()) {
@@ -148,6 +151,7 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
           logger.log(`${tag} skipped (already indexed in ${result.indexPath})`);
         } else {
           saved += 1;
+          savedSources.push(file.fileName);
           processedForState.push(file);
           logger.log(`${tag} saved -> ${result.notePath}`);
         }
@@ -171,6 +175,7 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
       saved,
       skipped,
       failed,
+      savedSources,
     };
   } finally {
     await client.close();

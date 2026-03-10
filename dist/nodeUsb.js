@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { platform } from "node:os";
 import { WebUSB } from "usb";
 import { HiDockClient } from "./client.js";
 const DEFAULT_NODE_FILTERS = [
@@ -42,9 +44,36 @@ export function formatHiDockPluggedInPrompt(productName) {
     const border = "=".repeat(message.length + 4);
     return `${border}\n| ${message} |\n${border}`;
 }
+/**
+ * Fast OS-level USB presence check using ioreg (macOS) or lsusb (Linux).
+ * Unlike WebUSB.getDevices(), this never caches or breaks after USB errors.
+ * Returns the product name if found, or null if not connected.
+ */
+export function detectHiDockPresence() {
+    try {
+        if (platform() === "darwin") {
+            const output = execFileSync("/usr/sbin/ioreg", ["-p", "IOUSB", "-l"], {
+                encoding: "utf-8",
+                timeout: 3000,
+            });
+            const match = output.match(/"USB Product Name"\s*=\s*"([^"]*[Hh]i[Dd]ock[^"]*)"/i);
+            return match ? (match[1] ?? "HiDock") : null;
+        }
+        if (platform() === "linux") {
+            const output = execFileSync("lsusb", { encoding: "utf-8", timeout: 3000 });
+            const match = output.match(/hidock/i);
+            return match ? "HiDock" : null;
+        }
+    }
+    catch {
+        // Command failed — treat as not connected
+    }
+    return null;
+}
 export function createHiDockConnectionMonitor(options = {}) {
     const intervalMs = options.intervalMs ?? DEFAULT_MONITOR_INTERVAL_MS;
     const emitOnStartupIfConnected = options.emitOnStartupIfConnected ?? true;
+    const useInjectedFindDevice = !!options.findDevice;
     const findDevice = options.findDevice ?? findHiDockNodeDevice;
     const discoveryOptions = options.discoveryOptions ?? {};
     const formatPrompt = options.formatPrompt ?? formatHiDockPluggedInPrompt;
@@ -54,11 +83,7 @@ export function createHiDockConnectionMonitor(options = {}) {
     let isPolling = false;
     let hasObservedState = false;
     let wasConnected = false;
-    async function pollNow() {
-        if (isPolling) {
-            return;
-        }
-        isPolling = true;
+    async function pollViaFindDevice() {
         try {
             const device = await findDevice(discoveryOptions);
             const productName = getProductName(device);
@@ -78,10 +103,54 @@ export function createHiDockConnectionMonitor(options = {}) {
         catch (error) {
             const reason = toErrorMessage(error);
             if (!isNoDeviceFoundError(reason)) {
-                log(`[HiDock USB Watch] unable to access HiDock USB (${reason}). If HiNotes Web is open, it may be occupying the USB connection.`);
+                if (reason.includes("LIBUSB_ERROR_BUSY")) {
+                    log(`${reason} — If HiNotes Web is open, it may be occupying the USB connection.`);
+                }
+                else {
+                    log(reason);
+                }
             }
             wasConnected = false;
             hasObservedState = true;
+        }
+    }
+    async function pollViaOsDetection() {
+        try {
+            const detectedName = detectHiDockPresence();
+            const isConnected = detectedName !== null;
+            const shouldEmit = hasObservedState
+                ? isConnected && !wasConnected
+                : isConnected && emitOnStartupIfConnected;
+            if (shouldEmit) {
+                const productName = detectedName;
+                onPluggedIn({
+                    productName,
+                    prompt: formatPrompt(productName),
+                    device: {},
+                });
+            }
+            wasConnected = isConnected;
+            hasObservedState = true;
+        }
+        catch (error) {
+            const reason = toErrorMessage(error);
+            log(`[HiDock USB Watch] poll error: ${reason}`);
+            wasConnected = false;
+            hasObservedState = true;
+        }
+    }
+    async function pollNow() {
+        if (isPolling) {
+            return;
+        }
+        isPolling = true;
+        try {
+            if (useInjectedFindDevice) {
+                await pollViaFindDevice();
+            }
+            else {
+                await pollViaOsDetection();
+            }
         }
         finally {
             isPolling = false;

@@ -9,6 +9,8 @@ import {
 } from "../nodeUsb.js";
 import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync } from "./meetingsSync.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
+import { buildGalaxyData } from "../galaxyData.js";
+import { startGalaxyServer } from "../galaxyServer.js";
 
 interface UsbWatchCliOptions {
   intervalMs: number;
@@ -91,6 +93,14 @@ async function main(): Promise<void> {
           sendDesktopNotification("HiDock Sync", parts.join(", "), log);
         } else {
           sendDesktopNotification("HiDock Sync", "All recordings up to date", log);
+        }
+        // Launch galaxy dashboard after sync with newly synced sources highlighted
+        if (saved > 0) {
+          await launchGalaxyDashboard({
+            storageDir: syncOptions.storageDir,
+            newSources: result?.savedSources ?? [],
+            log,
+          });
         }
       } catch (error) {
         log(`[sync] failed: ${toErrorMessage(error)}`);
@@ -471,6 +481,49 @@ function readUnknownString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+const DEFAULT_GALAXY_PORT = 18180;
+let galaxyServerHandle: { url: string; close: () => Promise<void> } | null = null;
+
+async function launchGalaxyDashboard(options: {
+  storageDir: string;
+  newSources: string[];
+  log: (message: string) => void;
+}): Promise<void> {
+  const { storageDir, newSources, log } = options;
+  try {
+    // Close previous galaxy server if still running
+    if (galaxyServerHandle) {
+      await galaxyServerHandle.close();
+      galaxyServerHandle = null;
+    }
+
+    log(`[galaxy] building graph from ${storageDir}`);
+    const buildOptions: { storageDir: string; newlySyncedSources?: string[] } = { storageDir };
+    if (newSources.length > 0) {
+      buildOptions.newlySyncedSources = newSources;
+    }
+    const graphData = await buildGalaxyData(buildOptions);
+    log(`[galaxy] ${graphData.nodes.length} nodes, ${graphData.edges.length} edges`);
+
+    galaxyServerHandle = await startGalaxyServer({
+      port: DEFAULT_GALAXY_PORT,
+      graphData,
+      log: (message) => log(`[galaxy] ${message}`),
+    });
+
+    log(`[galaxy] dashboard ready at ${galaxyServerHandle.url}`);
+
+    // Auto-open browser on macOS
+    if (platform() === "darwin") {
+      execFile("open", [galaxyServerHandle.url], (err) => {
+        if (err) log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);
+      });
+    }
+  } catch (error) {
+    log(`[galaxy] failed: ${toErrorMessage(error)}`);
+  }
+}
+
 const HIDOCK_NOTIFIER_BIN = new URL(
   "../../HiDockNotifier.app/Contents/MacOS/terminal-notifier",
   import.meta.url,
@@ -484,19 +537,18 @@ function sendDesktopNotification(
   if (platform() !== "darwin") {
     return;
   }
+  if (log) {
+    log(`[notify] sending: "${title}" — "${message}"`);
+  }
   const notifierPath = HIDOCK_NOTIFIER_BIN.pathname;
-  const args = ["-title", title, "-message", message, "-timeout", "10"];
-  execFile(notifierPath, args, (error) => {
-    if (error) {
-      // Fallback to osascript if HiDockNotifier is not available
-      const escapedTitle = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const escapedMessage = message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const script = `display notification "${escapedMessage}" with title "${escapedTitle}"`;
-      execFile("osascript", ["-e", script], (fallbackError) => {
-        if (fallbackError && log) {
-          log(`Desktop notification failed: ${toErrorMessage(fallbackError)}`);
-        }
-      });
+  if (log) {
+    log(`[notify] using: ${notifierPath}`);
+  }
+  execFile(notifierPath, ["-title", title, "-message", message, "-timeout", "5"], { timeout: 8000 }, (error) => {
+    if (error && log) {
+      log(`[notify] error: ${toErrorMessage(error)}`);
+    } else if (log) {
+      log(`[notify] delivered`);
     }
   });
 }

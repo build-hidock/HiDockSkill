@@ -1,0 +1,59 @@
+import type { StorageTier, DocumentKind } from "./meetingStorage.js";
+export interface GalaxyNode {
+    id: string;
+    title: string;
+    dateTime: string;
+    attendees: string[];
+    brief: string;
+    source: string;
+    tier: StorageTier;
+    kind: DocumentKind;
+    isNew: boolean;
+    notePath: string;
+}
+export interface GalaxyEdge {
+    source: string;
+    target: string;
+    type: "attendee" | "sameDay" | "topic";
+    weight: number;
+}
+export interface GalaxyGraphData {
+    nodes: GalaxyNode[];
+    edges: GalaxyEdge[];
+    generatedAt: string;
+}
+/** Extract a field value from a pipe-delimited index line. */
+export declare function extractField(line: string, fieldName: string): string;
+export interface ParsedIndexEntry {
+    dateTime: string;
+    title: string;
+    attendees: string[];
+    brief: string;
+    source: string;
+    notePath: string;
+}
+/**
+ * Parse a single meeting-index line.
+ *
+ * Meeting format:
+ *   `- DateTime: ... | Title: ... | Attendee: ... | Brief: ... | Source: ... | Note: ...`
+ *
+ * Whisper format (subset):
+ *   `- DateTime: ... | Brief: ... | Source: ... | Note: ...`
+ */
+export declare function parseIndexLine(line: string): ParsedIndexEntry | null;
+/** Derive the storage tier from the relative note path. */
+export declare function extractTier(notePath: string): StorageTier;
+/** Extract lowercased keyword tokens from a text string. */
+export declare function extractKeywords(text: string): Set<string>;
+/** Jaccard similarity between two keyword sets. */
+export declare function jaccardSimilarity(a: Set<string>, b: Set<string>): number;
+/** Convert the index datetime string (YYYY-MM-DD HH:MM:SS) to ISO 8601. */
+export declare function toISO8601(dateTimeStr: string): string;
+/** Extract calendar date (YYYY-MM-DD) from a datetime string. */
+export declare function extractCalendarDate(dateTimeStr: string): string;
+export declare function buildGalaxyData(options: {
+    storageDir: string;
+    newlySyncedSources?: string[];
+}): Promise<GalaxyGraphData>;
+//# sourceMappingURL=galaxyData.d.ts.map

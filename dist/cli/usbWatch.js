@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
+import { platform } from "node:os";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createHiDockConnectionMonitor, } from "../nodeUsb.js";
 import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync } from "./meetingsSync.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
+import { buildGalaxyData } from "../galaxyData.js";
+import { startGalaxyServer } from "../galaxyServer.js";
 const DEFAULT_INTERVAL_MS = 5000;
 const DEFAULT_ACTIVE_WINDOW_MINUTES = 5;
 const DEFAULT_OPENCLAW_BIN = "openclaw";
@@ -43,10 +46,32 @@ async function main() {
         ? async () => {
             try {
                 const syncOptions = parseMeetingsSyncArgs([]);
-                await runMeetingsSync({ options: syncOptions, logger: console });
+                const result = await runMeetingsSync({ options: syncOptions, logger: console });
+                const saved = result?.saved ?? 0;
+                const failed = result?.failed ?? 0;
+                if (saved > 0 || failed > 0) {
+                    const parts = [];
+                    if (saved > 0)
+                        parts.push(`${saved} synced`);
+                    if (failed > 0)
+                        parts.push(`${failed} failed`);
+                    sendDesktopNotification("HiDock Sync", parts.join(", "), log);
+                }
+                else {
+                    sendDesktopNotification("HiDock Sync", "All recordings up to date", log);
+                }
+                // Launch galaxy dashboard after sync with newly synced sources highlighted
+                if (saved > 0) {
+                    await launchGalaxyDashboard({
+                        storageDir: syncOptions.storageDir,
+                        newSources: result?.savedSources ?? [],
+                        log,
+                    });
+                }
             }
             catch (error) {
                 log(`[sync] failed: ${toErrorMessage(error)}`);
+                sendDesktopNotification("HiDock Sync", `Sync failed: ${toErrorMessage(error)}`, log);
             }
         }
         : undefined;
@@ -339,9 +364,66 @@ function readUnknownString(value) {
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
 }
+const DEFAULT_GALAXY_PORT = 18180;
+let galaxyServerHandle = null;
+async function launchGalaxyDashboard(options) {
+    const { storageDir, newSources, log } = options;
+    try {
+        // Close previous galaxy server if still running
+        if (galaxyServerHandle) {
+            await galaxyServerHandle.close();
+            galaxyServerHandle = null;
+        }
+        log(`[galaxy] building graph from ${storageDir}`);
+        const buildOptions = { storageDir };
+        if (newSources.length > 0) {
+            buildOptions.newlySyncedSources = newSources;
+        }
+        const graphData = await buildGalaxyData(buildOptions);
+        log(`[galaxy] ${graphData.nodes.length} nodes, ${graphData.edges.length} edges`);
+        galaxyServerHandle = await startGalaxyServer({
+            port: DEFAULT_GALAXY_PORT,
+            graphData,
+            log: (message) => log(`[galaxy] ${message}`),
+        });
+        log(`[galaxy] dashboard ready at ${galaxyServerHandle.url}`);
+        // Auto-open browser on macOS
+        if (platform() === "darwin") {
+            execFile("open", [galaxyServerHandle.url], (err) => {
+                if (err)
+                    log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);
+            });
+        }
+    }
+    catch (error) {
+        log(`[galaxy] failed: ${toErrorMessage(error)}`);
+    }
+}
+const HIDOCK_NOTIFIER_BIN = new URL("../../HiDockNotifier.app/Contents/MacOS/terminal-notifier", import.meta.url);
+function sendDesktopNotification(title, message, log) {
+    if (platform() !== "darwin") {
+        return;
+    }
+    if (log) {
+        log(`[notify] sending: "${title}" — "${message}"`);
+    }
+    const notifierPath = HIDOCK_NOTIFIER_BIN.pathname;
+    if (log) {
+        log(`[notify] using: ${notifierPath}`);
+    }
+    execFile(notifierPath, ["-title", title, "-message", message, "-timeout", "5"], { timeout: 8000 }, (error) => {
+        if (error && log) {
+            log(`[notify] error: ${toErrorMessage(error)}`);
+        }
+        else if (log) {
+            log(`[notify] delivered`);
+        }
+    });
+}
 export function createUsbWatchPlugInHandler(options) {
     return (event) => {
         options.log(event.prompt);
+        sendDesktopNotification("HiDock P1", "Device connected. Syncing recordings...", options.log);
         if (options.onAutoSync) {
             options.onAutoSync();
         }

@@ -26,6 +26,7 @@ export interface SyncRunResult {
     saved: number;
     skipped: number;
     failed: number;
+    savedSources: string[];
 }
 interface RunMeetingsSyncOptions {
     options: CliOptions;

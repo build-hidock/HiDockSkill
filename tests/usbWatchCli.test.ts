@@ -255,8 +255,9 @@ describe("usb watch Slack forwarders", () => {
     onPluggedIn({ prompt: "plugged", productName: "P1", device: {} as never });
     await flushAsyncWork();
 
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(log).toHaveBeenCalledWith("plugged");
+    // 1 prompt log + 2 notification logs ([notify] sending, [notify] using)
+    expect(log).toHaveBeenCalledTimes(3);
+    expect(log.mock.calls[0]?.[0]).toBe("plugged");
     expect(onAutoSync).toHaveBeenCalledTimes(1);
     expect(sendSlackMessage).toHaveBeenCalledTimes(1);
     expect(sendSlackMessage).toHaveBeenCalledWith("plugged");
@@ -272,9 +273,10 @@ describe("usb watch Slack forwarders", () => {
     onPluggedIn({ prompt: "plugged", productName: "P1", device: {} as never });
     await flushAsyncWork();
 
-    expect(log).toHaveBeenCalledTimes(2);
+    // 1 prompt log + 2 notification logs ([notify] sending, [notify] using) + 1 Slack error
+    expect(log).toHaveBeenCalledTimes(4);
     expect(log.mock.calls[0]?.[0]).toBe("plugged");
-    expect(log.mock.calls[1]?.[0]).toContain(
+    expect(log.mock.calls[3]?.[0]).toContain(
       "Slack forward failed: openclaw failed",
     );
   });

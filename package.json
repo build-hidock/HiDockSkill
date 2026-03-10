@@ -12,7 +12,9 @@
     "probe:lab": "node research/protocol_lab.mjs",
     "probe:live": "node research/hidock_live_probe.mjs",
     "meetings:sync": "npm run build && node dist/cli/meetingsSync.js",
-    "usb:watch": "npm run build && node dist/cli/usbWatch.js"
+    "usb:watch": "npm run build && node dist/cli/usbWatch.js",
+    "galaxy": "npm run build && node dist/cli/galaxyDashboard.js",
+    "galaxy:open": "npm run build && node dist/cli/galaxyDashboard.js --open"
   },
   "keywords": [],
   "author": "",

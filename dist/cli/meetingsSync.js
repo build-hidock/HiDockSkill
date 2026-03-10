@@ -24,7 +24,7 @@ export async function runMeetingsSync(input) {
         logger.log(`[HiDock Sync] start at ${new Date().toISOString()} total=${files.length} candidate=${filtered.length} selected=${selected.length} backend=${options.storageBackend} lastSuccess=${state.lastSuccessfulSyncAt ?? "never"}`);
         if (selected.length === 0) {
             logger.log("[HiDock Sync] no new files to process");
-            return { totalFiles: files.length, selectedFiles: 0, saved: 0, skipped: 0, failed: 0 };
+            return { totalFiles: files.length, selectedFiles: 0, saved: 0, skipped: 0, failed: 0, savedSources: [] };
         }
         if (options.dryRun) {
             for (const [index, file] of selected.entries()) {
@@ -36,6 +36,7 @@ export async function runMeetingsSync(input) {
                 saved: 0,
                 skipped: 0,
                 failed: 0,
+                savedSources: [],
             };
         }
         await stateStore.markRunStarted(new Date());
@@ -67,6 +68,7 @@ export async function runMeetingsSync(input) {
         let saved = 0;
         let skipped = 0;
         let failed = 0;
+        const savedSources = [];
         const processedForState = [];
         for (const [index, file] of selected.entries()) {
             const tag = `[${index + 1}/${selected.length}]`;
@@ -84,6 +86,7 @@ export async function runMeetingsSync(input) {
                 }
                 else {
                     saved += 1;
+                    savedSources.push(file.fileName);
                     processedForState.push(file);
                     logger.log(`${tag} saved -> ${result.notePath}`);
                 }
@@ -103,6 +106,7 @@ export async function runMeetingsSync(input) {
             saved,
             skipped,
             failed,
+            savedSources,
         };
     }
     finally {
