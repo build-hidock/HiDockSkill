@@ -14,7 +14,7 @@ export interface GalaxyNode {
 export interface GalaxyEdge {
     source: string;
     target: string;
-    type: "attendee" | "sameDay" | "topic";
+    type: "attendee" | "sameDay" | "series" | "project";
     weight: number;
 }
 export interface GalaxyGraphData {
@@ -52,6 +52,15 @@ export declare function jaccardSimilarity(a: Set<string>, b: Set<string>): numbe
 export declare function toISO8601(dateTimeStr: string): string;
 /** Extract calendar date (YYYY-MM-DD) from a datetime string. */
 export declare function extractCalendarDate(dateTimeStr: string): string;
+/** Normalize a title for series grouping. */
+export declare function normalizeTitle(title: string): string;
+/** Check if a title is generic (noise) and should not form series. */
+export declare function isGenericTitle(title: string): boolean;
+/**
+ * Extract entity tokens from text for project/topic matching.
+ * Handles both Latin words and CJK bigrams.
+ */
+export declare function extractEntityTokens(text: string): string[];
 export declare function buildGalaxyData(options: {
     storageDir: string;
     newlySyncedSources?: string[];

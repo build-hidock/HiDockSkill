@@ -65,7 +65,7 @@ export function extractTier(notePath) {
     return "coldmem";
 }
 // ---------------------------------------------------------------------------
-// Keyword extraction & Jaccard similarity (for topic edges)
+// Keyword extraction & Jaccard similarity (utility, used by project edges)
 // ---------------------------------------------------------------------------
 const STOP_WORDS = new Set([
     "a", "an", "the", "and", "or", "of", "to", "in", "for", "on", "with",
@@ -75,6 +75,17 @@ const STOP_WORDS = new Set([
     "about", "been", "into", "than", "then", "them", "they", "their", "there",
     "these", "those", "we", "he", "she", "my", "me", "our", "you", "your",
     "i", "am",
+]);
+/** Additional stop words for entity extraction — generic meeting terms. */
+const ENTITY_STOP_WORDS = new Set([
+    ...STOP_WORDS,
+    "meeting", "meetings", "discussion", "discussions", "discussing",
+    "discussed", "overview", "conclusion", "summary", "recap", "update",
+    "updates", "details", "information", "content", "available", "provided",
+    "session", "acknowledgment", "conversation", "feedback", "question",
+    "questions", "remarks", "closing", "plans", "noted", "new", "also",
+    "first", "second", "third", "last", "next", "current", "recent",
+    "brief", "note", "notes", "transcript", "unknown", "untitled",
 ]);
 /** Extract lowercased keyword tokens from a text string. */
 export function extractKeywords(text) {
@@ -103,8 +114,6 @@ export function jaccardSimilarity(a, b) {
 // ---------------------------------------------------------------------------
 /** Convert the index datetime string (YYYY-MM-DD HH:MM:SS) to ISO 8601. */
 export function toISO8601(dateTimeStr) {
-    // Input: "2026-02-21 13:28:25"
-    // Output: "2026-02-21T13:28:25"
     const cleaned = dateTimeStr.trim().replace(" ", "T");
     return cleaned;
 }
@@ -113,7 +122,158 @@ export function extractCalendarDate(dateTimeStr) {
     return dateTimeStr.trim().slice(0, 10);
 }
 // ---------------------------------------------------------------------------
-// Edge building
+// Series detection — recurring meetings with identical titles
+// ---------------------------------------------------------------------------
+const GENERIC_TITLE_PATTERNS = [
+    /^unknown/i,
+    /^untitled$/i,
+    /^whisper$/i,
+];
+/** Normalize a title for series grouping. */
+export function normalizeTitle(title) {
+    return title.toLowerCase().replace(/\s+/g, " ").trim();
+}
+/** Check if a title is generic (noise) and should not form series. */
+export function isGenericTitle(title) {
+    const normalized = normalizeTitle(title);
+    if (normalized.length < 3)
+        return true;
+    return GENERIC_TITLE_PATTERNS.some((p) => p.test(normalized));
+}
+function buildSeriesEdges(nodes) {
+    const groups = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+        if (isGenericTitle(nodes[i].title))
+            continue;
+        const normalized = normalizeTitle(nodes[i].title);
+        const group = groups.get(normalized);
+        if (group) {
+            group.push(i);
+        }
+        else {
+            groups.set(normalized, [i]);
+        }
+    }
+    const edges = [];
+    for (const indices of groups.values()) {
+        if (indices.length < 2)
+            continue;
+        for (let a = 0; a < indices.length; a++) {
+            for (let b = a + 1; b < indices.length; b++) {
+                edges.push({
+                    source: nodes[indices[a]].id,
+                    target: nodes[indices[b]].id,
+                    type: "series",
+                    weight: indices.length, // group size as weight
+                });
+            }
+        }
+    }
+    return edges;
+}
+// ---------------------------------------------------------------------------
+// Entity extraction — IDF-weighted significant terms for project clustering
+// ---------------------------------------------------------------------------
+/**
+ * Extract entity tokens from text for project/topic matching.
+ * Handles both Latin words and CJK bigrams.
+ */
+export function extractEntityTokens(text) {
+    const tokens = [];
+    // Latin words: lowercase, filter stop words and very short words
+    const latinWords = text.match(/[a-zA-Z][a-zA-Z0-9]*/g) ?? [];
+    for (const w of latinWords) {
+        const lower = w.toLowerCase();
+        if (lower.length > 1 && !ENTITY_STOP_WORDS.has(lower)) {
+            tokens.push(lower);
+        }
+    }
+    // CJK sequences: extract full sequences and bigrams for partial matching
+    const cjkSequences = text.match(/[\u4e00-\u9fff\uac00-\ud7af]{2,}/g) ?? [];
+    for (const seq of cjkSequences) {
+        tokens.push(seq);
+        // Also generate bigrams for cross-matching
+        // e.g. "录音设备" → "录音", "音设", "设备"
+        if (seq.length > 2) {
+            for (let i = 0; i < seq.length - 1; i++) {
+                tokens.push(seq.substring(i, i + 2));
+            }
+        }
+    }
+    return tokens;
+}
+const MAX_PROJECT_EDGES_PER_NODE = 5;
+function buildProjectEdges(nodes) {
+    // Extract entity tokens for each node
+    const nodeTokens = nodes.map((n) => extractEntityTokens(`${n.title} ${n.brief}`));
+    // Build document frequency: how many nodes contain each token
+    const docFreq = new Map();
+    for (const tokens of nodeTokens) {
+        const unique = new Set(tokens);
+        for (const token of unique) {
+            docFreq.set(token, (docFreq.get(token) ?? 0) + 1);
+        }
+    }
+    // Significant terms: appear in 2+ docs but not more than 30% of all docs.
+    // Terms appearing in too many docs are generic; terms in only 1 doc can't
+    // connect anything.
+    const maxDf = Math.max(Math.ceil(nodes.length * 0.3), 3);
+    const significantTerms = new Set();
+    for (const [term, df] of docFreq) {
+        if (df >= 2 && df <= maxDf) {
+            significantTerms.add(term);
+        }
+    }
+    // Filter each node's tokens to only significant ones
+    const nodeSignificant = nodeTokens.map((tokens) => {
+        const filtered = new Set();
+        for (const t of tokens) {
+            if (significantTerms.has(t))
+                filtered.add(t);
+        }
+        return filtered;
+    });
+    // Build candidate edges from shared significant terms
+    const candidates = [];
+    for (let i = 0; i < nodes.length; i++) {
+        if (nodeSignificant[i].size === 0)
+            continue;
+        for (let j = i + 1; j < nodes.length; j++) {
+            if (nodeSignificant[j].size === 0)
+                continue;
+            let shared = 0;
+            for (const t of nodeSignificant[i]) {
+                if (nodeSignificant[j].has(t))
+                    shared++;
+            }
+            if (shared >= 1) {
+                candidates.push({
+                    source: nodes[i].id,
+                    target: nodes[j].id,
+                    type: "project",
+                    weight: shared,
+                });
+            }
+        }
+    }
+    // Sort descending by weight, cap to max edges per node
+    candidates.sort((a, b) => b.weight - a.weight);
+    const edgeCounts = new Map();
+    const kept = [];
+    for (const edge of candidates) {
+        const countS = edgeCounts.get(edge.source) ?? 0;
+        const countT = edgeCounts.get(edge.target) ?? 0;
+        if (countS >= MAX_PROJECT_EDGES_PER_NODE || countT >= MAX_PROJECT_EDGES_PER_NODE) {
+            continue;
+        }
+        kept.push(edge);
+        edgeCounts.set(edge.source, countS + 1);
+        edgeCounts.set(edge.target, countT + 1);
+    }
+    return kept;
+}
+// ---------------------------------------------------------------------------
+// Attendee edges — shared named attendees
 // ---------------------------------------------------------------------------
 function buildAttendeeEdges(nodes) {
     const edges = [];
@@ -138,9 +298,11 @@ function buildAttendeeEdges(nodes) {
     }
     return edges;
 }
+// ---------------------------------------------------------------------------
+// Same-day edges — temporal proximity
+// ---------------------------------------------------------------------------
 function buildSameDayEdges(nodes) {
     const edges = [];
-    // Group nodes by calendar date
     const dateGroups = new Map();
     for (const node of nodes) {
         const date = extractCalendarDate(node.dateTime);
@@ -167,43 +329,6 @@ function buildSameDayEdges(nodes) {
         }
     }
     return edges;
-}
-const MAX_TOPIC_EDGES_PER_NODE = 3;
-const TOPIC_SIMILARITY_THRESHOLD = 0.3;
-function buildTopicEdges(nodes) {
-    // Pre-compute keyword sets
-    const keywordSets = nodes.map((n) => extractKeywords(`${n.title} ${n.brief}`));
-    // Compute all candidate edges
-    const candidates = [];
-    for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-            const score = jaccardSimilarity(keywordSets[i], keywordSets[j]);
-            if (score >= TOPIC_SIMILARITY_THRESHOLD) {
-                candidates.push({
-                    source: nodes[i].id,
-                    target: nodes[j].id,
-                    type: "topic",
-                    weight: Math.round(score * 1000) / 1000, // 3 decimal places
-                });
-            }
-        }
-    }
-    // Sort descending by weight so we keep the strongest edges per node
-    candidates.sort((a, b) => b.weight - a.weight);
-    // Cap to max edges per node
-    const edgeCounts = new Map();
-    const kept = [];
-    for (const edge of candidates) {
-        const countS = edgeCounts.get(edge.source) ?? 0;
-        const countT = edgeCounts.get(edge.target) ?? 0;
-        if (countS >= MAX_TOPIC_EDGES_PER_NODE || countT >= MAX_TOPIC_EDGES_PER_NODE) {
-            continue;
-        }
-        kept.push(edge);
-        edgeCounts.set(edge.source, countS + 1);
-        edgeCounts.set(edge.target, countT + 1);
-    }
-    return kept;
 }
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -263,13 +388,14 @@ export async function buildGalaxyData(options) {
             notePath: path.join(storageDir, entry.notePath),
         });
     }
-    // Build edges
+    // Build edges — four relationship types
     const attendeeEdges = buildAttendeeEdges(nodes);
     const sameDayEdges = buildSameDayEdges(nodes);
-    const topicEdges = buildTopicEdges(nodes);
+    const seriesEdges = buildSeriesEdges(nodes);
+    const projectEdges = buildProjectEdges(nodes);
     return {
         nodes,
-        edges: [...attendeeEdges, ...sameDayEdges, ...topicEdges],
+        edges: [...seriesEdges, ...projectEdges, ...attendeeEdges, ...sameDayEdges],
         generatedAt: new Date().toISOString(),
     };
 }

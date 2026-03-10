@@ -13,6 +13,9 @@ import {
   parseIndexLine,
   toISO8601,
   extractCalendarDate,
+  normalizeTitle,
+  isGenericTitle,
+  extractEntityTokens,
 } from "../src/galaxyData.js";
 
 // ---------------------------------------------------------------------------
@@ -173,6 +176,64 @@ describe("keyword extraction and Jaccard", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Series detection — normalizeTitle / isGenericTitle
+// ---------------------------------------------------------------------------
+
+describe("series detection helpers", () => {
+  it("normalizes titles to lowercase trimmed form", () => {
+    expect(normalizeTitle("  MBC News  Update  ")).toBe("mbc news update");
+  });
+
+  it("identifies generic titles", () => {
+    expect(isGenericTitle("Unknown Meeting")).toBe(true);
+    expect(isGenericTitle("unknown")).toBe(true);
+    expect(isGenericTitle("Untitled")).toBe(true);
+    expect(isGenericTitle("Whisper")).toBe(true);
+    expect(isGenericTitle("AB")).toBe(true); // too short
+  });
+
+  it("allows non-generic titles", () => {
+    expect(isGenericTitle("MBC News Update")).toBe(false);
+    expect(isGenericTitle("兔兔任务分配")).toBe(false);
+    expect(isGenericTitle("Recording Test")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entity extraction
+// ---------------------------------------------------------------------------
+
+describe("extractEntityTokens", () => {
+  it("extracts Latin words excluding stop words and entity stop words", () => {
+    const tokens = extractEntityTokens("Bluetooth Microphone Discussion");
+    expect(tokens).toContain("bluetooth");
+    expect(tokens).toContain("microphone");
+    // "discussion" is in ENTITY_STOP_WORDS
+    expect(tokens).not.toContain("discussion");
+  });
+
+  it("extracts CJK sequences and bigrams", () => {
+    const tokens = extractEntityTokens("录音设备问题");
+    expect(tokens).toContain("录音设备问题"); // full sequence
+    expect(tokens).toContain("录音"); // bigram
+    expect(tokens).toContain("设备"); // bigram
+  });
+
+  it("handles mixed Latin and CJK text", () => {
+    const tokens = extractEntityTokens("HiDock P1 录音测试");
+    expect(tokens).toContain("hidock");
+    expect(tokens).toContain("p1");
+    expect(tokens).toContain("录音");
+  });
+
+  it("handles Korean text (Hangul)", () => {
+    const tokens = extractEntityTokens("이덕영 뉴스");
+    expect(tokens).toContain("이덕영");
+    expect(tokens).toContain("이덕"); // bigram
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildGalaxyData — integration-level tests using temp dirs
 // ---------------------------------------------------------------------------
 
@@ -292,16 +353,65 @@ describe("buildGalaxyData", () => {
     expect(sameDayEdges[0].weight).toBe(1);
   });
 
-  it("detects topic similarity edges above threshold", async () => {
+  it("detects series edges for recurring meeting titles", async () => {
     const dir = await makeTempStorage();
-    // Two entries with very similar titles/briefs, one completely different
+    const indexContent =
+      "# Meeting Index\n\n" +
+      "- DateTime: 2026-01-01 10:00:00 | Title: MBC News Update | " +
+      "Attendee: Reporter | Brief: News report. | " +
+      "Source: s1.hda | Note: meetings/hotmem/202601/a.md\n" +
+      "- DateTime: 2026-02-15 10:00:00 | Title: MBC News Update | " +
+      "Attendee: Reporter | Brief: Another news report. | " +
+      "Source: s2.hda | Note: meetings/hotmem/202602/b.md\n" +
+      "- DateTime: 2026-03-01 10:00:00 | Title: MBC News Update | " +
+      "Attendee: Reporter | Brief: Third news report. | " +
+      "Source: s3.hda | Note: meetings/hotmem/202603/c.md\n" +
+      "- DateTime: 2026-01-10 10:00:00 | Title: Unrelated Topic | " +
+      "Attendee: Unknown | Brief: Something else. | " +
+      "Source: s4.hda | Note: meetings/hotmem/202601/d.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    const seriesEdges = graph.edges.filter((e) => e.type === "series");
+    // 3 MBC News entries → 3 edges (a↔b, a↔c, b↔c)
+    expect(seriesEdges).toHaveLength(3);
+    for (const edge of seriesEdges) {
+      expect(edge.weight).toBe(3); // group size
+    }
+    // Unrelated Topic should not be in series
+    const unrelatedInSeries = seriesEdges.some(
+      (e) => e.source.includes("d.md") || e.target.includes("d.md"),
+    );
+    expect(unrelatedInSeries).toBe(false);
+  });
+
+  it("skips Unknown Meeting from series detection", async () => {
+    const dir = await makeTempStorage();
+    const indexContent =
+      "# Meeting Index\n\n" +
+      "- DateTime: 2026-01-01 10:00:00 | Title: Unknown Meeting | " +
+      "Attendee: Unknown | Brief: Nothing. | " +
+      "Source: s1.hda | Note: meetings/hotmem/202601/a.md\n" +
+      "- DateTime: 2026-01-02 10:00:00 | Title: Unknown Meeting | " +
+      "Attendee: Unknown | Brief: Nothing again. | " +
+      "Source: s2.hda | Note: meetings/hotmem/202601/b.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    const seriesEdges = graph.edges.filter((e) => e.type === "series");
+    expect(seriesEdges).toHaveLength(0);
+  });
+
+  it("detects project edges via shared significant entities", async () => {
+    const dir = await makeTempStorage();
+    // Two entries sharing "bluetooth" + "microphone", one unrelated
     const indexContent =
       "# Meeting Index\n\n" +
       "- DateTime: 2026-01-01 10:00:00 | Title: Bluetooth Microphone Setup | " +
-      "Attendee: Unknown | Brief: Discussing bluetooth microphone setup testing. | " +
+      "Attendee: Unknown | Brief: Setting up bluetooth microphone device. | " +
       "Source: s1.hda | Note: meetings/hotmem/202601/a.md\n" +
       "- DateTime: 2026-01-15 10:00:00 | Title: Bluetooth Microphone Testing | " +
-      "Attendee: Unknown | Brief: Testing bluetooth microphone setup recording. | " +
+      "Attendee: Unknown | Brief: Testing bluetooth microphone recording. | " +
       "Source: s2.hda | Note: meetings/hotmem/202601/b.md\n" +
       "- DateTime: 2026-01-20 10:00:00 | Title: Financial Review | " +
       "Attendee: Unknown | Brief: Quarterly financial targets and loan management. | " +
@@ -309,19 +419,19 @@ describe("buildGalaxyData", () => {
     await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
 
     const graph = await buildGalaxyData({ storageDir: dir });
-    const topicEdges = graph.edges.filter((e) => e.type === "topic");
+    const projectEdges = graph.edges.filter((e) => e.type === "project");
     // The two bluetooth microphone entries should be linked
-    expect(topicEdges.length).toBeGreaterThanOrEqual(1);
-    const btEdge = topicEdges.find(
+    expect(projectEdges.length).toBeGreaterThanOrEqual(1);
+    const btEdge = projectEdges.find(
       (e) =>
         (e.source.includes("a.md") && e.target.includes("b.md")) ||
         (e.source.includes("b.md") && e.target.includes("a.md")),
     );
     expect(btEdge).toBeDefined();
-    expect(btEdge!.weight).toBeGreaterThanOrEqual(0.3);
+    expect(btEdge!.weight).toBeGreaterThanOrEqual(1);
 
     // Financial review should NOT be linked to bluetooth entries
-    const financialToBluetoothEdge = topicEdges.find(
+    const financialToBluetoothEdge = projectEdges.find(
       (e) =>
         (e.source.includes("c.md") && (e.target.includes("a.md") || e.target.includes("b.md"))) ||
         (e.target.includes("c.md") && (e.source.includes("a.md") || e.source.includes("b.md"))),
@@ -329,30 +439,56 @@ describe("buildGalaxyData", () => {
     expect(financialToBluetoothEdge).toBeUndefined();
   });
 
-  it("caps topic edges to max 3 per node", async () => {
+  it("detects project edges via shared CJK entities", async () => {
     const dir = await makeTempStorage();
-    // Create 6 nodes all with very similar titles — each pair should exceed
-    // the threshold, but each node should have at most 3 topic edges.
-    const lines = Array.from({ length: 6 }, (_, i) =>
-      `- DateTime: 2026-0${i + 1}-01 10:00:00 | Title: Recording microphone bluetooth test session | ` +
-      `Attendee: Unknown | Brief: Testing recording microphone bluetooth device. | ` +
-      `Source: s${i}.hda | Note: meetings/hotmem/20260${i + 1}/node${i}.md`,
+    // Two entries sharing "录音" CJK bigram
+    const indexContent =
+      "# Meeting Index\n\n" +
+      "- DateTime: 2026-01-01 10:00:00 | Title: 录音设备测试 | " +
+      "Attendee: Unknown | Brief: 测试录音设备. | " +
+      "Source: s1.hda | Note: meetings/hotmem/202601/a.md\n" +
+      "- DateTime: 2026-01-15 10:00:00 | Title: 录音产品讨论 | " +
+      "Attendee: Unknown | Brief: 讨论录音产品. | " +
+      "Source: s2.hda | Note: meetings/hotmem/202601/b.md\n" +
+      "- DateTime: 2026-01-20 10:00:00 | Title: 财务报告 | " +
+      "Attendee: Unknown | Brief: 季度财务报告. | " +
+      "Source: s3.hda | Note: meetings/hotmem/202601/c.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    const projectEdges = graph.edges.filter((e) => e.type === "project");
+    // The two 录音 entries should be linked via shared CJK bigrams
+    const recordingEdge = projectEdges.find(
+      (e) =>
+        (e.source.includes("a.md") && e.target.includes("b.md")) ||
+        (e.source.includes("b.md") && e.target.includes("a.md")),
+    );
+    expect(recordingEdge).toBeDefined();
+  });
+
+  it("caps project edges to max 5 per node", async () => {
+    const dir = await makeTempStorage();
+    // Create 8 nodes all sharing "microphone bluetooth recording"
+    const lines = Array.from({ length: 8 }, (_, i) =>
+      `- DateTime: 2026-0${(i % 9) + 1}-01 10:00:00 | Title: Bluetooth Microphone Recording Setup | ` +
+      `Attendee: Unknown | Brief: Configuring bluetooth microphone recording device. | ` +
+      `Source: s${i}.hda | Note: meetings/hotmem/2026${String(i + 1).padStart(2, "0")}/node${i}.md`,
     ).join("\n");
     const indexContent = `# Meeting Index\n\n${lines}\n`;
     await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
 
     const graph = await buildGalaxyData({ storageDir: dir });
-    const topicEdges = graph.edges.filter((e) => e.type === "topic");
+    const projectEdges = graph.edges.filter((e) => e.type === "project");
 
     // Count edges per node
     const edgeCounts = new Map<string, number>();
-    for (const e of topicEdges) {
+    for (const e of projectEdges) {
       edgeCounts.set(e.source, (edgeCounts.get(e.source) ?? 0) + 1);
       edgeCounts.set(e.target, (edgeCounts.get(e.target) ?? 0) + 1);
     }
 
     for (const count of edgeCounts.values()) {
-      expect(count).toBeLessThanOrEqual(3);
+      expect(count).toBeLessThanOrEqual(5);
     }
   });
 
@@ -377,5 +513,30 @@ describe("buildGalaxyData", () => {
     // Same day edge should exist between them
     const sameDayEdges = graph.edges.filter((e) => e.type === "sameDay");
     expect(sameDayEdges).toHaveLength(1);
+  });
+
+  it("produces all four edge types with appropriate data", async () => {
+    const dir = await makeTempStorage();
+    const indexContent =
+      "# Meeting Index\n\n" +
+      // Series pair (same title)
+      "- DateTime: 2026-01-01 10:00:00 | Title: Weekly Standup | Attendee: Alice | " +
+      "Brief: Team standup. | Source: s1.hda | Note: meetings/hotmem/202601/a.md\n" +
+      "- DateTime: 2026-01-08 10:00:00 | Title: Weekly Standup | Attendee: Alice | " +
+      "Brief: Team standup again. | Source: s2.hda | Note: meetings/hotmem/202601/b.md\n" +
+      // Same day as first entry + shared attendee with both
+      "- DateTime: 2026-01-01 14:00:00 | Title: Bluetooth Microphone Test | Attendee: Alice | " +
+      "Brief: Testing bluetooth microphone device. | Source: s3.hda | Note: meetings/hotmem/202601/c.md\n" +
+      // Project edge partner (shares bluetooth + microphone entities)
+      "- DateTime: 2026-02-01 10:00:00 | Title: Bluetooth Microphone Review | Attendee: Bob | " +
+      "Brief: Reviewing bluetooth microphone performance. | Source: s4.hda | Note: meetings/hotmem/202602/d.md\n";
+    await fs.writeFile(path.join(dir, "meetingindex.md"), indexContent, "utf8");
+
+    const graph = await buildGalaxyData({ storageDir: dir });
+    const edgeTypes = new Set(graph.edges.map((e) => e.type));
+    expect(edgeTypes.has("series")).toBe(true);    // a↔b (Weekly Standup)
+    expect(edgeTypes.has("attendee")).toBe(true);   // a↔b, a↔c, b↔c (Alice)
+    expect(edgeTypes.has("sameDay")).toBe(true);    // a↔c (Jan 1)
+    expect(edgeTypes.has("project")).toBe(true);    // c↔d (bluetooth + microphone)
   });
 });

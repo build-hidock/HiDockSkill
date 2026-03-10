@@ -24,9 +24,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
     --color-warm: #FF8C00;
     --color-cold: #4169E1;
     --color-new: #FFFFFF;
+    --edge-series: #06b6d4;
+    --edge-project: #f59e0b;
     --edge-attendee: #22c55e;
-    --edge-sameday: #9ca3af;
-    --edge-topic: #a855f7;
+    --edge-sameday: rgba(156,163,175,0.3);
     --bg-dark: #0a0a1a;
     --bg-mid: #1a1a3a;
     --panel-bg: rgba(10, 10, 30, 0.92);
@@ -326,10 +327,11 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
   <div class="legend-item"><span class="legend-card" style="background:rgba(255,140,0,0.2); border:1px solid var(--color-warm);"></span> Warm</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(65,105,225,0.2); border:1px solid var(--color-cold);"></span> Cold (old)</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(255,255,255,0.15); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(255,255,255,0.4);"></span> New note</div>
-  <h3 style="margin-top:10px;">Edges</h3>
+  <h3 style="margin-top:10px;">Relationships</h3>
+  <div class="legend-item"><span class="legend-line" style="background:var(--edge-series); height:3px;"></span> Same series</div>
+  <div class="legend-item"><span class="legend-line" style="background:var(--edge-project);"></span> Same project/topic</div>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-attendee);"></span> Shared attendee</div>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-sameday);"></span> Same day</div>
-  <div class="legend-item"><span class="legend-line" style="background:var(--edge-topic);"></span> Topic overlap</div>
 </div>
 
 <svg id="galaxy-svg"></svg>
@@ -351,9 +353,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
     coldmem: { color: "#4169E1", bg: "rgba(65,105,225,0.12)", orbitalRadius: 550  },
   };
   var EDGE_COLORS = {
+    series:   "#06b6d4",
+    project:  "#f59e0b",
     attendee: "#22c55e",
-    sameDay:  "#9ca3af",
-    topic:    "#a855f7",
+    sameDay:  "rgba(156,163,175,0.3)",
   };
   var NEW_COLOR = "#FFFFFF";
 
@@ -445,12 +448,29 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
 
   /* ---------- edges ---------- */
   var linkGroup = container.append("g").attr("class", "links");
+  var EDGE_STYLE = {
+    series:   { opacity: 0.7, minWidth: 2.0, maxWidth: 4.0, dash: "" },
+    project:  { opacity: 0.5, minWidth: 1.0, maxWidth: 3.0, dash: "" },
+    attendee: { opacity: 0.5, minWidth: 1.0, maxWidth: 2.5, dash: "" },
+    sameDay:  { opacity: 0.2, minWidth: 0.3, maxWidth: 0.8, dash: "3,4" },
+  };
+
   var linkElements = linkGroup.selectAll("line")
     .data(edges)
     .join("line")
     .attr("stroke", function(d) { return EDGE_COLORS[d.type] || "#666"; })
-    .attr("stroke-opacity", function(d) { return Math.min(0.15 + d.weight * 0.1, 0.5); })
-    .attr("stroke-width", function(d) { return Math.min(0.5 + d.weight * 0.5, 3); });
+    .attr("stroke-opacity", function(d) {
+      var style = EDGE_STYLE[d.type] || EDGE_STYLE.sameDay;
+      return style.opacity;
+    })
+    .attr("stroke-width", function(d) {
+      var style = EDGE_STYLE[d.type] || EDGE_STYLE.sameDay;
+      return Math.min(style.minWidth + d.weight * 0.5, style.maxWidth);
+    })
+    .attr("stroke-dasharray", function(d) {
+      var style = EDGE_STYLE[d.type] || EDGE_STYLE.sameDay;
+      return style.dash;
+    });
 
   /* ---------- nodes (memcards) ---------- */
   var nodeGroup = container.append("g").attr("class", "nodes");
@@ -601,8 +621,18 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
   var simulation = d3.forceSimulation(nodes)
     .force("link", d3.forceLink(edges)
       .id(function(d) { return d.id; })
-      .distance(120)
-      .strength(function(d) { return 0.15 + d.weight * 0.08; })
+      .distance(function(d) {
+        if (d.type === "series") return 50;   // tight cluster
+        if (d.type === "project") return 90;  // medium cluster
+        if (d.type === "attendee") return 100;
+        return 160; // sameDay — loose
+      })
+      .strength(function(d) {
+        if (d.type === "series") return 0.6 + d.weight * 0.05;  // strong pull
+        if (d.type === "project") return 0.2 + d.weight * 0.08; // medium pull
+        if (d.type === "attendee") return 0.15 + d.weight * 0.1;
+        return 0.03; // sameDay — very weak
+      })
     )
     .force("charge", d3.forceManyBody().strength(-200))
     .force("center", d3.forceCenter(centerX, centerY))
