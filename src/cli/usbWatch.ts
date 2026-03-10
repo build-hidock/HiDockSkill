@@ -10,7 +10,7 @@ import {
 import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync } from "./meetingsSync.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
 import { buildGalaxyData } from "../galaxyData.js";
-import { startGalaxyServer } from "../galaxyServer.js";
+import { startGalaxyServer, GalaxyServerHandle } from "../galaxyServer.js";
 
 interface UsbWatchCliOptions {
   intervalMs: number;
@@ -94,17 +94,21 @@ async function main(): Promise<void> {
         } else {
           sendDesktopNotification("HiDock Sync", "All recordings up to date", log);
         }
-        // Launch galaxy dashboard after sync with newly synced sources highlighted
-        if (saved > 0) {
-          await launchGalaxyDashboard({
-            storageDir: syncOptions.storageDir,
-            newSources: result?.savedSources ?? [],
-            log,
-          });
-        }
+        // Push graph data to the already-running galaxy server
+        // The browser page transitions from syncing animation to galaxy view
+        await updateGalaxyWithData({
+          storageDir: syncOptions.storageDir,
+          newSources: result?.savedSources ?? [],
+          log,
+        });
       } catch (error) {
         log(`[sync] failed: ${toErrorMessage(error)}`);
         sendDesktopNotification("HiDock Sync", `Sync failed: ${toErrorMessage(error)}`, log);
+        // Even on failure, show whatever data we have
+        try {
+          const syncOptions = parseMeetingsSyncArgs([]);
+          await updateGalaxyWithData({ storageDir: syncOptions.storageDir, newSources: [], log });
+        } catch { /* ignore */ }
       }
     }
     : undefined;
@@ -482,45 +486,62 @@ function readUnknownString(value: unknown): string | null {
 }
 
 const DEFAULT_GALAXY_PORT = 18180;
-let galaxyServerHandle: { url: string; close: () => Promise<void> } | null = null;
+let galaxyServerHandle: GalaxyServerHandle | null = null;
 
-async function launchGalaxyDashboard(options: {
-  storageDir: string;
-  newSources: string[];
-  log: (message: string) => void;
-}): Promise<void> {
-  const { storageDir, newSources, log } = options;
+/**
+ * Start the galaxy server in syncing mode (no data) and open the browser.
+ * The page shows a pulsing "Syncing HiDock device" animation.
+ */
+async function openGalaxySyncing(log: (message: string) => void): Promise<void> {
   try {
-    // Close previous galaxy server if still running
+    // Close previous server if still running
     if (galaxyServerHandle) {
       await galaxyServerHandle.close();
       galaxyServerHandle = null;
     }
 
-    log(`[galaxy] building graph from ${storageDir}`);
-    const buildOptions: { storageDir: string; newlySyncedSources?: string[] } = { storageDir };
-    if (newSources.length > 0) {
-      buildOptions.newlySyncedSources = newSources;
-    }
-    const graphData = await buildGalaxyData(buildOptions);
-    log(`[galaxy] ${graphData.nodes.length} nodes, ${graphData.edges.length} edges`);
-
     galaxyServerHandle = await startGalaxyServer({
       port: DEFAULT_GALAXY_PORT,
-      graphData,
+      // No graphData → server starts in syncing mode (returns 204 for /data.json)
       log: (message) => log(`[galaxy] ${message}`),
     });
 
-    log(`[galaxy] dashboard ready at ${galaxyServerHandle.url}`);
+    log(`[galaxy] syncing page at ${galaxyServerHandle.url}`);
 
-    // Auto-open browser on macOS
     if (platform() === "darwin") {
       execFile("open", [galaxyServerHandle.url], (err) => {
         if (err) log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);
       });
     }
   } catch (error) {
-    log(`[galaxy] failed: ${toErrorMessage(error)}`);
+    log(`[galaxy] failed to start server: ${toErrorMessage(error)}`);
+  }
+}
+
+/**
+ * Build galaxy data and push it to the running server.
+ * The browser page polls /data.json and transitions from syncing to graph automatically.
+ */
+async function updateGalaxyWithData(options: {
+  storageDir: string;
+  newSources: string[];
+  log: (message: string) => void;
+}): Promise<void> {
+  const { storageDir, newSources, log } = options;
+  if (!galaxyServerHandle) {
+    log(`[galaxy] no server running, skipping data update`);
+    return;
+  }
+  try {
+    log(`[galaxy] building graph from ${storageDir}`);
+    const buildOptions: { storageDir: string; newlySyncedSources?: string[] } = { storageDir };
+    if (newSources.length > 0) {
+      buildOptions.newlySyncedSources = newSources;
+    }
+    const graphData = await buildGalaxyData(buildOptions);
+    galaxyServerHandle.updateData(graphData);
+  } catch (error) {
+    log(`[galaxy] failed to build data: ${toErrorMessage(error)}`);
   }
 }
 
@@ -561,6 +582,10 @@ export function createUsbWatchPlugInHandler(options: {
   return (event: HiDockPlugInEvent): void => {
     options.log(event.prompt);
     sendDesktopNotification("HiDock P1", "Device connected. Syncing recordings...", options.log);
+
+    // Open galaxy page immediately in syncing mode (before sync starts)
+    void openGalaxySyncing(options.log);
+
     if (options.onAutoSync) {
       options.onAutoSync();
     }
