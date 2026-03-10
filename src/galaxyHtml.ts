@@ -490,6 +490,158 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     padding: 8px 0;
   }
 
+  /* ---------- view tabs ---------- */
+  #view-tabs {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 150;
+    display: none;
+    background: rgba(13, 1, 23, 0.85);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(168,85,247,0.2);
+    border-radius: 20px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .view-tab {
+    padding: 5px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 17px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .view-tab:hover {
+    color: var(--text-secondary);
+  }
+  .view-tab.active {
+    background: rgba(168,85,247,0.2);
+    color: var(--text-primary);
+    box-shadow: 0 0 12px rgba(168,85,247,0.15);
+  }
+
+  /* ---------- list view ---------- */
+  #list-view {
+    position: fixed;
+    top: 48px; left: 0; right: 560px; bottom: 0;
+    background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
+    overflow-y: auto;
+    display: none;
+    padding: 20px 32px;
+  }
+  #list-view::-webkit-scrollbar { width: 6px; }
+  #list-view::-webkit-scrollbar-track { background: transparent; }
+  #list-view::-webkit-scrollbar-thumb {
+    background: rgba(168,85,247,0.2);
+    border-radius: 3px;
+  }
+
+  .list-search {
+    max-width: 480px;
+    margin: 0 auto 20px;
+    display: flex;
+  }
+  .list-search input {
+    flex: 1;
+    background: rgba(168,85,247,0.06);
+    border: 1px solid rgba(168,85,247,0.15);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    font-family: inherit;
+    transition: border-color 0.2s;
+  }
+  .list-search input::placeholder { color: var(--text-dim); }
+  .list-search input:focus { border-color: rgba(168,85,247,0.4); }
+
+  .list-table {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    border-collapse: separate;
+    border-spacing: 0 4px;
+  }
+  .list-table thead th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(168,85,247,0.1);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .list-table thead th:hover { color: var(--text-secondary); }
+  .list-table thead th .sort-arrow { margin-left: 4px; font-size: 9px; }
+  .list-table tbody tr {
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .list-table tbody tr:hover {
+    background: rgba(168,85,247,0.08);
+  }
+  .list-table tbody td {
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(168,85,247,0.04);
+    vertical-align: middle;
+  }
+  .list-src-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+  .list-title-cell {
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .list-brief-cell {
+    color: var(--text-secondary);
+    font-size: 12px;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list-tier-cell .tier-badge { font-size: 10px; }
+  .list-attendee-cell {
+    font-size: 11px;
+    color: var(--text-secondary);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list-date-cell {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .list-empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-style: italic;
+  }
+
   /* ---------- legend ---------- */
   #legend {
     position: fixed;
@@ -579,6 +731,30 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 <div id="header" style="display:none;">
   <h1>HiDock Galaxy</h1>
   <div class="stats" id="stats-bar"></div>
+</div>
+
+<div id="view-tabs">
+  <button class="view-tab active" data-view="galaxy" onclick="switchView('galaxy')">Galaxy</button>
+  <button class="view-tab" data-view="list" onclick="switchView('list')">List</button>
+</div>
+
+<div id="list-view">
+  <div class="list-search">
+    <input type="text" id="list-search-input" placeholder="Search notes..." oninput="filterList(this.value)">
+  </div>
+  <table class="list-table">
+    <thead>
+      <tr>
+        <th onclick="sortList('dateTime')">Date <span class="sort-arrow" id="sort-dateTime">&#x25BC;</span></th>
+        <th onclick="sortList('title')">Title <span class="sort-arrow" id="sort-title"></span></th>
+        <th onclick="sortList('brief')">Brief <span class="sort-arrow" id="sort-brief"></span></th>
+        <th onclick="sortList('tier')">Tier <span class="sort-arrow" id="sort-tier"></span></th>
+        <th onclick="sortList('attendees')">Attendees <span class="sort-arrow" id="sort-attendees"></span></th>
+        <th onclick="sortList('sourceType')">Type <span class="sort-arrow" id="sort-sourceType"></span></th>
+      </tr>
+    </thead>
+    <tbody id="list-tbody"></tbody>
+  </table>
 </div>
 
 <div id="tooltip">
@@ -703,12 +879,16 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 
     // Show galaxy UI
     document.getElementById("header").style.display = "flex";
+    document.getElementById("view-tabs").style.display = "flex";
     document.getElementById("legend").style.display = "block";
     document.getElementById("galaxy-svg").style.display = "block";
     document.getElementById("insights-panel").style.display = "block";
 
     // Populate insights
     renderInsights(data.insights);
+
+    // Build list view data
+    buildListView(data);
 
     // Render galaxy
     setTimeout(function() { renderGalaxy(data); }, 100);
@@ -770,6 +950,129 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     div.textContent = text || "";
     return div.innerHTML;
   }
+
+  /* ====================================================================
+   * VIEW SWITCHING
+   * ==================================================================== */
+  var currentView = "galaxy";
+  var listNodes = [];
+  var listSortKey = "dateTime";
+  var listSortAsc = false;
+  var listFilter = "";
+
+  window.switchView = function(view) {
+    if (view === currentView) return;
+    currentView = view;
+
+    var tabs = document.querySelectorAll(".view-tab");
+    tabs.forEach(function(t) { t.classList.toggle("active", t.getAttribute("data-view") === view); });
+
+    if (view === "galaxy") {
+      document.getElementById("galaxy-svg").style.display = "block";
+      document.getElementById("legend").style.display = "block";
+      document.getElementById("list-view").style.display = "none";
+    } else {
+      document.getElementById("galaxy-svg").style.display = "none";
+      document.getElementById("legend").style.display = "none";
+      document.getElementById("list-view").style.display = "block";
+      renderListRows();
+    }
+  };
+
+  /* ====================================================================
+   * LIST VIEW
+   * ==================================================================== */
+  var SOURCE_TYPE_LABELS = { rec: "Meeting", wip: "WIP", room: "Room", call: "Call", whsp: "Whisper" };
+  var LIST_SRC_COLORS = { rec: "#3b82f6", wip: "#22c55e", room: "#f59e0b", call: "#ef4444", whsp: "#c084fc" };
+
+  function buildListView(data) {
+    listNodes = data.nodes.map(function(n) { return Object.assign({}, n); });
+    listNodes.sort(function(a, b) { return (b.dateTime || "").localeCompare(a.dateTime || ""); });
+  }
+
+  function getFilteredNodes() {
+    var q = listFilter.toLowerCase();
+    var filtered = listNodes;
+    if (q) {
+      filtered = listNodes.filter(function(n) {
+        return (n.title || "").toLowerCase().indexOf(q) >= 0 ||
+               (n.brief || "").toLowerCase().indexOf(q) >= 0 ||
+               (n.attendees || []).join(" ").toLowerCase().indexOf(q) >= 0 ||
+               (n.dateTime || "").toLowerCase().indexOf(q) >= 0 ||
+               (SOURCE_TYPE_LABELS[n.sourceType] || "").toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    var key = listSortKey;
+    var asc = listSortAsc;
+    filtered.sort(function(a, b) {
+      var va, vb;
+      if (key === "attendees") {
+        va = (a.attendees || []).join(", ");
+        vb = (b.attendees || []).join(", ");
+      } else {
+        va = a[key] || "";
+        vb = b[key] || "";
+      }
+      if (va < vb) return asc ? -1 : 1;
+      if (va > vb) return asc ? 1 : -1;
+      return 0;
+    });
+    return filtered;
+  }
+
+  function renderListRows() {
+    var tbody = document.getElementById("list-tbody");
+    var nodes = getFilteredNodes();
+    if (nodes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="list-empty">No matching notes</td></tr>';
+      return;
+    }
+    var html = "";
+    nodes.forEach(function(n) {
+      var srcColor = LIST_SRC_COLORS[n.sourceType] || LIST_SRC_COLORS.rec;
+      var srcLabel = SOURCE_TYPE_LABELS[n.sourceType] || "Meeting";
+      var attendeeStr = (n.attendees || []).join(", ") || "—";
+      var dateStr = (n.dateTime || "").slice(0, 16).replace("T", " ");
+      html += '<tr onclick="listRowClick(\\'' + escAttr(n.id) + '\\')">';
+      html += '<td class="list-date-cell">' + escHtml(dateStr) + '</td>';
+      html += '<td><div class="list-title-cell"><span class="list-src-dot" style="background:' + srcColor + '"></span>' + escHtml(n.title || "Untitled") + '</div></td>';
+      html += '<td class="list-brief-cell" title="' + escAttr(n.brief || "") + '">' + escHtml(n.brief || "") + '</td>';
+      html += '<td class="list-tier-cell"><span class="tier-badge ' + n.tier + '">' + n.tier + '</span></td>';
+      html += '<td class="list-attendee-cell" title="' + escAttr(attendeeStr) + '">' + escHtml(attendeeStr) + '</td>';
+      html += '<td>' + escHtml(srcLabel) + '</td>';
+      html += '</tr>';
+    });
+    tbody.innerHTML = html;
+  }
+
+  function escAttr(s) {
+    return (s || "").replace(/&/g, "&amp;").replace(/'/g, "&#39;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
+  window.filterList = function(query) {
+    listFilter = query;
+    renderListRows();
+  };
+
+  window.sortList = function(key) {
+    if (listSortKey === key) {
+      listSortAsc = !listSortAsc;
+    } else {
+      listSortKey = key;
+      listSortAsc = key === "title" || key === "sourceType";
+    }
+    // Update sort arrows
+    ["dateTime", "title", "brief", "tier", "attendees", "sourceType"].forEach(function(k) {
+      var el = document.getElementById("sort-" + k);
+      if (el) el.innerHTML = k === listSortKey ? (listSortAsc ? "&#x25B2;" : "&#x25BC;") : "";
+    });
+    renderListRows();
+  };
+
+  window.listRowClick = function(id) {
+    var node = listNodes.find(function(n) { return n.id === id; });
+    if (node && window._openNoteModal) window._openNoteModal(node);
+  };
 
   /* ====================================================================
    * GALAXY RENDERER
@@ -997,6 +1300,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       openNoteModal(d);
     });
 
+    window._openNoteModal = openNoteModal;
     function openNoteModal(d) {
       document.getElementById("nm-title").textContent = d.title;
       document.getElementById("nm-date").textContent = d.dateTime;
