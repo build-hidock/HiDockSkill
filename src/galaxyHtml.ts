@@ -215,11 +215,11 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
     gap: 8px;
     color: #9ca3af;
   }
-  .legend-dot {
+  .legend-card {
     display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
+    width: 16px;
+    height: 12px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
   .legend-line {
@@ -229,13 +229,6 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
     flex-shrink: 0;
     border-radius: 1px;
   }
-  .legend-diamond {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    flex-shrink: 0;
-    transform: rotate(45deg);
-  }
 
   /* ---------- pulsing glow ---------- */
   @keyframes pulse-glow {
@@ -244,6 +237,31 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
   }
   .node-new {
     animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* ---------- memcard text ---------- */
+  .memcard-title {
+    font-size: 9px;
+    font-weight: 600;
+    fill: #f0f0f0;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .memcard-date {
+    font-size: 7px;
+    font-weight: 400;
+    fill: rgba(255,255,255,0.5);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .memcard-kind {
+    font-size: 7px;
+    font-weight: 500;
+    text-anchor: start;
+    dominant-baseline: central;
+    pointer-events: none;
   }
 
   /* ---------- star field background ---------- */
@@ -304,11 +322,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
 
 <div id="legend">
   <h3>Tiers</h3>
-  <div class="legend-item"><span class="legend-dot" style="background:var(--color-hot);"></span> Hot (recent)</div>
-  <div class="legend-item"><span class="legend-dot" style="background:var(--color-warm);"></span> Warm</div>
-  <div class="legend-item"><span class="legend-dot" style="background:var(--color-cold);"></span> Cold (old)</div>
-  <div class="legend-item"><span class="legend-dot" style="background:var(--color-new); box-shadow:0 0 6px #fff;"></span> New note</div>
-  <div class="legend-item"><span class="legend-diamond" style="background:var(--color-warm);"></span> Whisper</div>
+  <div class="legend-item"><span class="legend-card" style="background:rgba(255,215,0,0.2); border:1px solid var(--color-hot);"></span> Hot (recent)</div>
+  <div class="legend-item"><span class="legend-card" style="background:rgba(255,140,0,0.2); border:1px solid var(--color-warm);"></span> Warm</div>
+  <div class="legend-item"><span class="legend-card" style="background:rgba(65,105,225,0.2); border:1px solid var(--color-cold);"></span> Cold (old)</div>
+  <div class="legend-item"><span class="legend-card" style="background:rgba(255,255,255,0.15); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(255,255,255,0.4);"></span> New note</div>
   <h3 style="margin-top:10px;">Edges</h3>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-attendee);"></span> Shared attendee</div>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-sameday);"></span> Same day</div>
@@ -324,18 +341,41 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
   "use strict";
 
   /* ---------- constants ---------- */
-  const TIER_CONFIG = {
-    hotmem:  { color: "#FFD700", radius: 8,  orbitalRadius: 120  },
-    warmmem: { color: "#FF8C00", radius: 6,  orbitalRadius: 250  },
-    coldmem: { color: "#4169E1", radius: 4,  orbitalRadius: 450  },
+  var CARD_W = 72;
+  var CARD_H = 44;
+  var CARD_R = 10; // border-radius (iOS-like)
+  var CARD_NEW_GROW = 8; // extra px for new notes
+  var TIER_CONFIG = {
+    hotmem:  { color: "#FFD700", bg: "rgba(255,215,0,0.12)",  orbitalRadius: 200  },
+    warmmem: { color: "#FF8C00", bg: "rgba(255,140,0,0.12)",  orbitalRadius: 380  },
+    coldmem: { color: "#4169E1", bg: "rgba(65,105,225,0.12)", orbitalRadius: 550  },
   };
-  const EDGE_COLORS = {
+  var EDGE_COLORS = {
     attendee: "#22c55e",
     sameDay:  "#9ca3af",
     topic:    "#a855f7",
   };
-  const NEW_COLOR = "#FFFFFF";
-  const NEW_EXTRA_RADIUS = 4;
+  var NEW_COLOR = "#FFFFFF";
+
+  /** Truncate text to fit inside memcard */
+  function truncate(text, maxLen) {
+    if (!text) return "";
+    if (text.length <= maxLen) return text;
+    return text.slice(0, maxLen - 1) + "\u2026";
+  }
+  /** Extract 2-3 keywords from title */
+  function cardKeywords(title) {
+    var words = (title || "").split(/\\s+/).filter(function(w) { return w.length > 0; });
+    if (words.length <= 3) return words.join(" ");
+    return words.slice(0, 3).join(" ");
+  }
+  /** Format date for card: MM/DD */
+  function cardDate(dt) {
+    if (!dt) return "";
+    var parts = dt.slice(0, 10).split("-");
+    if (parts.length < 3) return dt.slice(0, 10);
+    return parts[1] + "/" + parts[2];
+  }
 
   /* ---------- data ---------- */
   const nodes = GALAXY_DATA.nodes.map(function(n) { return Object.assign({}, n); });
@@ -412,38 +452,67 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
     .attr("stroke-opacity", function(d) { return Math.min(0.15 + d.weight * 0.1, 0.5); })
     .attr("stroke-width", function(d) { return Math.min(0.5 + d.weight * 0.5, 3); });
 
-  /* ---------- nodes ---------- */
+  /* ---------- nodes (memcards) ---------- */
   var nodeGroup = container.append("g").attr("class", "nodes");
   var nodeElements = nodeGroup.selectAll("g")
     .data(nodes)
     .join("g")
     .attr("cursor", "pointer");
 
-  // meeting nodes = circles, whisper nodes = diamonds (rotated rect)
+  // Each node is a rounded-rect memcard with keywords inside
   nodeElements.each(function(d) {
     var g = d3.select(this);
     var cfg = TIER_CONFIG[d.tier] || TIER_CONFIG.coldmem;
-    var r = cfg.radius + (d.isNew ? NEW_EXTRA_RADIUS : 0);
-    var fillColor = d.isNew ? NEW_COLOR : cfg.color;
+    var grow = d.isNew ? CARD_NEW_GROW : 0;
+    var w = CARD_W + grow;
+    var h = CARD_H + grow;
+    var borderColor = d.isNew ? NEW_COLOR : cfg.color;
+    var bgColor = d.isNew ? "rgba(255,255,255,0.1)" : cfg.bg;
 
-    if (d.kind === "whisper") {
-      // diamond shape (rotated square)
-      var side = r * 1.4;
-      g.append("rect")
-        .attr("width", side).attr("height", side)
-        .attr("x", -side / 2).attr("y", -side / 2)
-        .attr("transform", "rotate(45)")
-        .attr("fill", fillColor)
-        .attr("stroke", d.isNew ? "#FFD700" : "rgba(255,255,255,0.15)")
-        .attr("stroke-width", d.isNew ? 1.5 : 0.5)
-        .attr("rx", 1);
+    // Card background
+    g.append("rect")
+      .attr("width", w).attr("height", h)
+      .attr("x", -w / 2).attr("y", -h / 2)
+      .attr("rx", CARD_R).attr("ry", CARD_R)
+      .attr("fill", bgColor)
+      .attr("stroke", borderColor)
+      .attr("stroke-width", d.isNew ? 1.8 : 0.8)
+      .attr("stroke-opacity", d.isNew ? 1.0 : 0.6);
+
+    // Kind indicator (small colored dot in top-left)
+    var kindColor = d.kind === "whisper" ? "#a855f7" : cfg.color;
+    g.append("circle")
+      .attr("cx", -w / 2 + 8).attr("cy", -h / 2 + 8)
+      .attr("r", 3)
+      .attr("fill", kindColor)
+      .attr("opacity", 0.8);
+
+    // Date label (top-right)
+    g.append("text")
+      .attr("class", "memcard-date")
+      .attr("x", w / 2 - 6).attr("y", -h / 2 + 8)
+      .attr("text-anchor", "end")
+      .text(cardDate(d.dateTime));
+
+    // Title / keywords (center, up to 2 lines)
+    var keywords = cardKeywords(d.title);
+    var line1 = truncate(keywords, 10);
+    var line2 = keywords.length > 10 ? truncate(keywords.slice(10).trim(), 10) : "";
+
+    if (line2) {
+      g.append("text")
+        .attr("class", "memcard-title")
+        .attr("x", 0).attr("y", -2)
+        .text(line1);
+      g.append("text")
+        .attr("class", "memcard-title")
+        .attr("x", 0).attr("y", 10)
+        .text(line2);
     } else {
-      // circle
-      g.append("circle")
-        .attr("r", r)
-        .attr("fill", fillColor)
-        .attr("stroke", d.isNew ? "#FFD700" : "rgba(255,255,255,0.15)")
-        .attr("stroke-width", d.isNew ? 1.5 : 0.5);
+      g.append("text")
+        .attr("class", "memcard-title")
+        .attr("x", 0).attr("y", 4)
+        .text(line1);
     }
 
     if (d.isNew) {
@@ -532,18 +601,18 @@ export function renderGalaxyHtml(data: GalaxyGraphData): string {
   var simulation = d3.forceSimulation(nodes)
     .force("link", d3.forceLink(edges)
       .id(function(d) { return d.id; })
-      .distance(80)
-      .strength(function(d) { return 0.2 + d.weight * 0.1; })
+      .distance(120)
+      .strength(function(d) { return 0.15 + d.weight * 0.08; })
     )
-    .force("charge", d3.forceManyBody().strength(-50))
+    .force("charge", d3.forceManyBody().strength(-200))
     .force("center", d3.forceCenter(centerX, centerY))
     .force("radial", d3.forceRadial(
       function(d) { return (TIER_CONFIG[d.tier] || TIER_CONFIG.coldmem).orbitalRadius; },
       centerX, centerY
     ).strength(0.4))
     .force("collide", d3.forceCollide(function(d) {
-      var cfg = TIER_CONFIG[d.tier] || TIER_CONFIG.coldmem;
-      return cfg.radius + (d.isNew ? NEW_EXTRA_RADIUS : 0) + 4;
+      var grow = d.isNew ? CARD_NEW_GROW : 0;
+      return (CARD_W + grow) / 2 + 6;
     }))
     .on("tick", ticked);
 
