@@ -28,9 +28,19 @@ export interface SyncRunResult {
     failed: number;
     savedSources: string[];
 }
+export type SyncFileStatus = "pending" | "downloading" | "transcribing" | "summarizing" | "saved" | "skipped" | "failed";
+export interface SyncProgressEvent {
+    phase: "connecting" | "listing" | "processing" | "done";
+    total: number;
+    current: number;
+    fileName: string;
+    status: SyncFileStatus;
+    error?: string;
+}
 interface RunMeetingsSyncOptions {
     options: CliOptions;
     logger?: Pick<typeof console, "log" | "error">;
+    onProgress?: (event: SyncProgressEvent) => void;
 }
 export declare function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<SyncRunResult>;
 export declare function parseArgs(argv: string[], env?: NodeJS.ProcessEnv): CliOptions;

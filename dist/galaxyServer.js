@@ -9,6 +9,7 @@ export function startGalaxyServer(options) {
     const log = options.log ?? (() => { });
     // Mutable state: starts null (syncing) or with initial data (ready)
     let graphData = options.graphData ?? null;
+    let syncProgress = { phase: "connecting", total: 0, current: 0, items: [] };
     return new Promise((resolve, reject) => {
         const server = http.createServer((req, res) => {
             const url = new URL(req.url ?? "/", `http://${host}:${port}`);
@@ -32,6 +33,15 @@ export function startGalaxyServer(options) {
             if (pathname === "/status") {
                 const state = graphData ? "ready" : "syncing";
                 const json = JSON.stringify({ state });
+                res.writeHead(200, {
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Cache-Control": "no-cache",
+                });
+                res.end(json);
+                return;
+            }
+            if (pathname === "/progress") {
+                const json = JSON.stringify(syncProgress);
                 res.writeHead(200, {
                     "Content-Type": "application/json; charset=utf-8",
                     "Cache-Control": "no-cache",
@@ -160,6 +170,9 @@ export function startGalaxyServer(options) {
                 updateData: (data) => {
                     graphData = data;
                     log(`Galaxy data updated: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+                },
+                updateProgress: (progress) => {
+                    syncProgress = progress;
                 },
             });
         });

@@ -13,7 +13,7 @@ export function renderGalaxyHtml(data) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HiDock Galaxy</title>
+<title>HiDock, Your Private Meeting Memory</title>
 <style>
   :root {
     --purple: #a855f7;
@@ -158,6 +158,69 @@ export function renderGalaxyHtml(data) {
     50%  { content: ".."; }
     75%  { content: "..."; }
   }
+
+  /* ---------- sync progress ---------- */
+  .sync-progress {
+    margin-top: 24px;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 340px;
+    overflow-y: auto;
+    text-align: left;
+  }
+  .sync-progress::-webkit-scrollbar { width: 4px; }
+  .sync-progress::-webkit-scrollbar-track { background: transparent; }
+  .sync-progress::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 2px; }
+  .sync-progress-header {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .sync-progress-bar {
+    height: 4px;
+    background: rgba(168,85,247,0.15);
+    border-radius: 2px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .sync-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--purple), var(--purple-light));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .sync-file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .sync-file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 11px;
+  }
+  .sync-file-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 8px;
+    font-weight: 500;
+  }
+  .sync-file-status.downloading { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .sync-file-status.transcribing { background: rgba(168,85,247,0.15); color: var(--purple-light); }
+  .sync-file-status.summarizing { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .sync-file-status.saved { background: rgba(34,197,94,0.15); color: #4ade80; }
+  .sync-file-status.skipped { background: rgba(124,111,159,0.1); color: var(--text-dim); }
+  .sync-file-status.failed { background: rgba(239,68,68,0.15); color: #f87171; }
+  .sync-file-status.pending { background: rgba(124,111,159,0.06); color: var(--text-dim); }
 
   .sync-ring {
     position: absolute;
@@ -588,6 +651,18 @@ export function renderGalaxyHtml(data) {
   .list-table tbody tr:hover {
     background: rgba(168,85,247,0.08);
   }
+  .list-table tbody tr.list-row-new {
+    background: rgba(168,85,247,0.12);
+    animation: list-row-glow 2s ease-in-out infinite;
+  }
+  .list-table tbody tr.list-row-new td:first-child {
+    border-left: 3px solid #a855f7;
+    padding-left: 9px;
+  }
+  @keyframes list-row-glow {
+    0%, 100% { background: rgba(168,85,247,0.12); }
+    50% { background: rgba(168,85,247,0.22); }
+  }
   .list-table tbody td {
     padding: 10px 12px;
     font-size: 13px;
@@ -721,12 +796,20 @@ export function renderGalaxyHtml(data) {
   <div class="sync-ring"></div>
   <div class="sync-orb"></div>
   <div class="sync-title">Syncing HiDock device</div>
-  <div class="sync-status">Downloading, transcribing, and analyzing<span class="sync-dots"></span></div>
+  <div class="sync-status" id="sync-status-text">Connecting to device<span class="sync-dots"></span></div>
+  <div class="sync-progress" id="sync-progress" style="display:none;">
+    <div class="sync-progress-header">
+      <span id="sync-progress-label">Processing...</span>
+      <span id="sync-progress-count"></span>
+    </div>
+    <div class="sync-progress-bar"><div class="sync-progress-fill" id="sync-progress-fill" style="width:0%"></div></div>
+    <div id="sync-file-list"></div>
+  </div>
 </div>
 
 <!-- Galaxy UI (hidden during sync) -->
 <div id="header" style="display:none;">
-  <h1>HiDock Galaxy</h1>
+  <h1>HiDock, Your Private Meeting Memory</h1>
   <div class="stats" id="stats-bar"></div>
 </div>
 
@@ -838,8 +921,23 @@ export function renderGalaxyHtml(data) {
     }
   }
 
+  var STATUS_LABELS = {
+    downloading: "Downloading",
+    transcribing: "Transcribing",
+    summarizing: "Summarizing",
+    saved: "Saved",
+    skipped: "Skipped",
+    failed: "Failed",
+    pending: "Pending"
+  };
+
   function startPolling() {
     pollTimer = setInterval(function() {
+      // Poll both data and progress
+      fetch("/progress").then(function(r) { return r.json(); }).then(function(p) {
+        updateSyncProgress(p);
+      }).catch(function() {});
+
       fetch("/data.json").then(function(res) {
         if (res.status === 200) {
           return res.json();
@@ -853,7 +951,47 @@ export function renderGalaxyHtml(data) {
           transitionToGalaxy(data);
         }
       }).catch(function() { /* ignore, retry */ });
-    }, 2000);
+    }, 1500);
+  }
+
+  function updateSyncProgress(p) {
+    if (!p || !p.phase) return;
+    var statusText = document.getElementById("sync-status-text");
+    var progressEl = document.getElementById("sync-progress");
+
+    if (p.phase === "connecting") {
+      statusText.innerHTML = 'Connecting to device<span class="sync-dots"></span>';
+      progressEl.style.display = "none";
+      return;
+    }
+
+    if (p.phase === "processing" && p.total > 0) {
+      var done = p.items.filter(function(i) { return i.status === "saved" || i.status === "skipped" || i.status === "failed"; }).length;
+      statusText.innerHTML = 'Processing ' + p.total + ' recordings<span class="sync-dots"></span>';
+      progressEl.style.display = "block";
+      document.getElementById("sync-progress-label").textContent = p.current + " of " + p.total;
+      document.getElementById("sync-progress-count").textContent = done + " done";
+      var pct = Math.round((done / p.total) * 100);
+      document.getElementById("sync-progress-fill").style.width = pct + "%";
+
+      // Render file list (show last 8 items, most recent first)
+      var visible = p.items.slice(-8).reverse();
+      var html = "";
+      visible.forEach(function(item) {
+        var shortName = item.fileName.replace(/\\.hda$/i, "");
+        var statusClass = item.status;
+        var statusLabel = STATUS_LABELS[item.status] || item.status;
+        html += '<div class="sync-file-item">';
+        html += '<span class="sync-file-name">' + escHtml(shortName) + '</span>';
+        html += '<span class="sync-file-status ' + statusClass + '">' + statusLabel + '</span>';
+        html += '</div>';
+      });
+      document.getElementById("sync-file-list").innerHTML = html;
+    }
+
+    if (p.phase === "done") {
+      statusText.innerHTML = 'Sync complete, loading galaxy<span class="sync-dots"></span>';
+    }
   }
 
   function transitionToGalaxy(data) {
@@ -1030,7 +1168,7 @@ export function renderGalaxyHtml(data) {
       var srcLabel = SOURCE_TYPE_LABELS[n.sourceType] || "Meeting";
       var attendeeStr = (n.attendees || []).join(", ") || "—";
       var dateStr = (n.dateTime || "").slice(0, 16).replace("T", " ");
-      html += '<tr onclick="listRowClick(\\'' + escAttr(n.id) + '\\')">';
+      html += '<tr class="' + (n.isNew ? 'list-row-new' : '') + '" onclick="listRowClick(\\'' + escAttr(n.id) + '\\')">';
       html += '<td class="list-date-cell">' + escHtml(dateStr) + '</td>';
       html += '<td><div class="list-title-cell"><span class="list-src-dot" style="background:' + srcColor + '"></span>' + escHtml(n.title || "Untitled") + '</div></td>';
       html += '<td class="list-brief-cell" title="' + escAttr(n.brief || "") + '">' + escHtml(n.brief || "") + '</td>';
@@ -1078,7 +1216,7 @@ export function renderGalaxyHtml(data) {
     var CARD_W = 72;
     var CARD_H = 44;
     var CARD_R = 10;
-    var CARD_NEW_GROW = 8;
+    var CARD_NEW_GROW = 22;
     var TIER_CONFIG = {
       hotmem:  { color: "#a855f7", bg: "rgba(168,85,247,0.12)",  orbitalRadius: 200  },
       warmmem: { color: "#7c3aed", bg: "rgba(124,58,237,0.12)",  orbitalRadius: 380  },

@@ -50,6 +50,15 @@ export class SyncStateStore {
         await this.write(state);
         return state;
     }
+    async markFileProcessed(file) {
+        const state = await this.read();
+        state.processedFiles[file.fileName] = {
+            fileName: file.fileName,
+            fileSize: file.fileSize,
+            processedAt: new Date().toISOString(),
+        };
+        await this.write(state);
+    }
     shouldProcessFile(file, state) {
         const existing = state.processedFiles[file.fileName];
         if (!existing) {

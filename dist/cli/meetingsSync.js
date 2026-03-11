@@ -7,6 +7,7 @@ import { createNotesStorageAdapter, parseNotesStorageBackend, } from "../notesSt
 export async function runMeetingsSync(input) {
     const logger = input.logger ?? console;
     const { options } = input;
+    const onProgress = input.onProgress ?? (() => { });
     if (options.whisperOnly && options.meetingsOnly) {
         throw new Error("Use only one of --whisper-only or --meetings-only.");
     }
@@ -73,32 +74,39 @@ export async function runMeetingsSync(input) {
         for (const [index, file] of selected.entries()) {
             const tag = `[${index + 1}/${selected.length}]`;
             logger.log(`${tag} ${file.fileName}`);
+            onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "downloading" });
             try {
                 const result = await workflow.processRecording(file, (received, total) => {
                     if (received === total) {
                         logger.log(`${tag} download complete (${total} bytes)`);
+                        onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "transcribing" });
                     }
                 });
                 if (result.skipped) {
                     skipped += 1;
                     processedForState.push(file);
+                    await stateStore.markFileProcessed(file);
                     logger.log(`${tag} skipped (already indexed in ${result.indexPath})`);
+                    onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "skipped" });
                 }
                 else {
                     saved += 1;
                     savedSources.push(file.fileName);
                     processedForState.push(file);
+                    await stateStore.markFileProcessed(file);
                     logger.log(`${tag} saved -> ${result.notePath}`);
+                    onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "saved" });
                 }
             }
             catch (error) {
                 failed += 1;
                 logger.error(`${tag} failed:`, error);
+                onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", error: String(error instanceof Error ? error.message : error) });
             }
         }
-        if (failed === 0) {
-            await stateStore.markRunCompleted({ completedAt: new Date(), processed: processedForState });
-        }
+        onProgress({ phase: "done", total: selected.length, current: selected.length, fileName: "", status: "saved" });
+        // Mark run completed (files already saved incrementally, this updates lastSuccessfulSyncAt)
+        await stateStore.markRunCompleted({ completedAt: new Date(), processed: processedForState });
         logger.log(`[HiDock Sync] end at ${new Date().toISOString()} saved=${saved}, skipped=${skipped}, failed=${failed}, storage=${options.storageDir}, backend=${options.storageBackend}, state=${options.stateFile}`);
         return {
             totalFiles: files.length,

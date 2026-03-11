@@ -3,6 +3,19 @@ import { promises as fs } from "node:fs";
 import type { GalaxyGraphData } from "./galaxyData.js";
 import { renderGalaxyHtml } from "./galaxyHtml.js";
 
+export interface SyncProgressItem {
+  fileName: string;
+  status: "pending" | "downloading" | "transcribing" | "summarizing" | "saved" | "skipped" | "failed";
+  error?: string;
+}
+
+export interface SyncProgress {
+  phase: "connecting" | "listing" | "processing" | "done";
+  total: number;
+  current: number;
+  items: SyncProgressItem[];
+}
+
 export interface GalaxyServerOptions {
   port?: number;
   host?: string;
@@ -15,6 +28,7 @@ export interface GalaxyServerHandle {
   url: string;
   close: () => Promise<void>;
   updateData: (data: GalaxyGraphData) => void;
+  updateProgress: (progress: SyncProgress) => void;
 }
 
 const DEFAULT_PORT = 18180;
@@ -29,6 +43,7 @@ export function startGalaxyServer(
 
   // Mutable state: starts null (syncing) or with initial data (ready)
   let graphData: GalaxyGraphData | null = options.graphData ?? null;
+  let syncProgress: SyncProgress = { phase: "connecting", total: 0, current: 0, items: [] };
 
   return new Promise<GalaxyServerHandle>((resolve, reject) => {
     const server = http.createServer((req, res) => {
@@ -56,6 +71,16 @@ export function startGalaxyServer(
       if (pathname === "/status") {
         const state = graphData ? "ready" : "syncing";
         const json = JSON.stringify({ state });
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+        res.end(json);
+        return;
+      }
+
+      if (pathname === "/progress") {
+        const json = JSON.stringify(syncProgress);
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-cache",
@@ -192,6 +217,9 @@ export function startGalaxyServer(
         updateData: (data: GalaxyGraphData) => {
           graphData = data;
           log(`Galaxy data updated: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+        },
+        updateProgress: (progress: SyncProgress) => {
+          syncProgress = progress;
         },
       });
     });

@@ -73,6 +73,16 @@ export class SyncStateStore {
     return state;
   }
 
+  async markFileProcessed(file: HiDockFileEntry): Promise<void> {
+    const state = await this.read();
+    state.processedFiles[file.fileName] = {
+      fileName: file.fileName,
+      fileSize: file.fileSize,
+      processedAt: new Date().toISOString(),
+    };
+    await this.write(state);
+  }
+
   shouldProcessFile(file: HiDockFileEntry, state: SyncState): boolean {
     const existing = state.processedFiles[file.fileName];
     if (!existing) {

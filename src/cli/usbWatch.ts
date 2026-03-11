@@ -7,10 +7,10 @@ import {
   createHiDockConnectionMonitor,
   HiDockPlugInEvent,
 } from "../nodeUsb.js";
-import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync } from "./meetingsSync.js";
+import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync, SyncProgressEvent } from "./meetingsSync.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
 import { buildGalaxyData } from "../galaxyData.js";
-import { startGalaxyServer, GalaxyServerHandle } from "../galaxyServer.js";
+import { startGalaxyServer, GalaxyServerHandle, SyncProgress, SyncProgressItem } from "../galaxyServer.js";
 
 interface UsbWatchCliOptions {
   intervalMs: number;
@@ -79,20 +79,45 @@ async function main(): Promise<void> {
     log: (message) => log(`[sync] ${message}`),
   });
 
+  const syncProgressItems: SyncProgressItem[] = [];
+
+  function handleSyncProgress(event: SyncProgressEvent): void {
+    if (event.phase === "processing") {
+      // Find or create item
+      let item = syncProgressItems.find((i) => i.fileName === event.fileName);
+      if (!item) {
+        item = { fileName: event.fileName, status: event.status };
+        syncProgressItems.push(item);
+      }
+      item.status = event.status;
+      if (event.error) item.error = event.error;
+    }
+
+    if (galaxyServerHandle) {
+      galaxyServerHandle.updateProgress({
+        phase: event.phase,
+        total: event.total,
+        current: event.current,
+        items: [...syncProgressItems],
+      });
+    }
+  }
+
   const runAutoSync = options.autoSync
     ? async () => {
+      syncProgressItems.length = 0;
       try {
         const syncOptions = parseMeetingsSyncArgs([]);
-        const result = await runMeetingsSync({ options: syncOptions, logger: console });
+        const result = await runMeetingsSync({ options: syncOptions, logger: console, onProgress: handleSyncProgress });
         const saved = result?.saved ?? 0;
         const failed = result?.failed ?? 0;
         if (saved > 0 || failed > 0) {
           const parts: string[] = [];
           if (saved > 0) parts.push(`${saved} synced`);
           if (failed > 0) parts.push(`${failed} failed`);
-          sendDesktopNotification("HiDock Sync", parts.join(", "), log);
+          log(`[sync] complete: ${parts.join(", ")}`);
         } else {
-          sendDesktopNotification("HiDock Sync", "All recordings up to date", log);
+          log(`[sync] complete: all recordings up to date`);
         }
         // Push graph data to the already-running galaxy server
         // The browser page transitions from syncing animation to galaxy view
@@ -103,7 +128,6 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         log(`[sync] failed: ${toErrorMessage(error)}`);
-        sendDesktopNotification("HiDock Sync", `Sync failed: ${toErrorMessage(error)}`, log);
         // Even on failure, show whatever data we have
         try {
           const syncOptions = parseMeetingsSyncArgs([]);
@@ -493,28 +517,37 @@ let galaxyServerHandle: GalaxyServerHandle | null = null;
  * The page shows a pulsing "Syncing HiDock device" animation.
  */
 async function openGalaxySyncing(log: (message: string) => void): Promise<void> {
-  try {
-    // Close previous server if still running
-    if (galaxyServerHandle) {
-      await galaxyServerHandle.close();
-      galaxyServerHandle = null;
-    }
+  const galaxyUrl = `http://127.0.0.1:${DEFAULT_GALAXY_PORT}`;
 
-    galaxyServerHandle = await startGalaxyServer({
-      port: DEFAULT_GALAXY_PORT,
-      // No graphData → server starts in syncing mode (returns 204 for /data.json)
-      log: (message) => log(`[galaxy] ${message}`),
-    });
-
-    log(`[galaxy] syncing page at ${galaxyServerHandle.url}`);
-
-    if (platform() === "darwin") {
-      execFile("open", [galaxyServerHandle.url], (err) => {
-        if (err) log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);
+  // If server is already running in this process, just open the browser — don't restart
+  if (galaxyServerHandle) {
+    log(`[galaxy] server already running, opening browser`);
+  } else {
+    try {
+      galaxyServerHandle = await startGalaxyServer({
+        port: DEFAULT_GALAXY_PORT,
+        // No graphData → server starts in syncing mode (returns 204 for /data.json)
+        log: (message) => log(`[galaxy] ${message}`),
       });
+
+      log(`[galaxy] syncing page at ${galaxyServerHandle.url}`);
+    } catch (error) {
+      const msg = toErrorMessage(error);
+      if (msg.includes("EADDRINUSE")) {
+        // Server already running from another process — reuse it
+        log(`[galaxy] server already running on port ${DEFAULT_GALAXY_PORT}`);
+      } else {
+        log(`[galaxy] failed to start server: ${msg}`);
+        return;
+      }
     }
-  } catch (error) {
-    log(`[galaxy] failed to start server: ${toErrorMessage(error)}`);
+  }
+
+  // Always open the browser
+  if (platform() === "darwin") {
+    execFile("open", [galaxyUrl], (err) => {
+      if (err) log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);
+    });
   }
 }
 

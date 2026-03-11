@@ -20,6 +20,7 @@ export declare class SyncStateStore {
         completedAt: Date;
         processed: HiDockFileEntry[];
     }): Promise<SyncState>;
+    markFileProcessed(file: HiDockFileEntry): Promise<void>;
     shouldProcessFile(file: HiDockFileEntry, state: SyncState): boolean;
     private write;
 }
