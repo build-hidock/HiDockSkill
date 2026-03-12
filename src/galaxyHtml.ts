@@ -29,11 +29,11 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     --color-warm: #7c3aed;
     --color-cold: #4338ca;
     --color-new: #FFFFFF;
-    --src-rec: #3b82f6;
-    --src-wip: #22c55e;
+    --src-rec: #22c55e;
+    --src-wip: #3b82f6;
     --src-room: #f59e0b;
-    --src-call: #ef4444;
-    --src-whsp: #c084fc;
+    --src-call: #22c55e;
+    --src-whsp: #3b82f6;
     --edge-series: #c084fc;
     --edge-project: #f59e0b;
     --edge-attendee: #22c55e;
@@ -891,11 +891,9 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   <div class="legend-item"><span class="legend-card" style="background:rgba(67,56,202,0.15); border:1px solid var(--color-cold);"></span> Cold (old)</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(168,85,247,0.4);"></span> New note</div>
   <h3 style="margin-top:10px;">Source</h3>
-  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-rec);"></span> Meeting</div>
-  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-wip);"></span> WIP</div>
-  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-room);"></span> Room</div>
-  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-call);"></span> Call</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-rec);"></span> Call</div>
   <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-whsp);"></span> Whisper</div>
+  <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-room);"></span> Room</div>
   <h3 style="margin-top:10px;">Relationships</h3>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-series); height:3px;"></span> Same series</div>
   <div class="legend-item"><span class="legend-line" style="background:var(--edge-project);"></span> Same project/topic</div>
@@ -1120,8 +1118,8 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   /* ====================================================================
    * LIST VIEW
    * ==================================================================== */
-  var SOURCE_TYPE_LABELS = { rec: "Meeting", wip: "WIP", room: "Room", call: "Call", whsp: "Whisper" };
-  var LIST_SRC_COLORS = { rec: "#3b82f6", wip: "#22c55e", room: "#f59e0b", call: "#ef4444", whsp: "#c084fc" };
+  var SOURCE_TYPE_LABELS = { rec: "Call", wip: "Whisper", room: "Room", call: "Call", whsp: "Whisper" };
+  var LIST_SRC_COLORS = { rec: "#22c55e", wip: "#3b82f6", room: "#f59e0b", call: "#22c55e", whsp: "#3b82f6" };
 
   function buildListView(data) {
     listNodes = data.nodes.map(function(n) { return Object.assign({}, n); });
@@ -1233,11 +1231,11 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     };
     var NEW_COLOR = "#FFFFFF";
     var SOURCE_TYPE_COLORS = {
-      rec:  "#3b82f6",
-      wip:  "#22c55e",
+      rec:  "#22c55e",
+      wip:  "#3b82f6",
       room: "#f59e0b",
-      call: "#ef4444",
-      whsp: "#c084fc",
+      call: "#22c55e",
+      whsp: "#3b82f6",
     };
 
     function truncate(text, maxLen) {

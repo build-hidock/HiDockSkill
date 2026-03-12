@@ -62,18 +62,25 @@ export function parseHiDockFileListBody(body: Uint8Array): HiDockFileList {
   if (body.length === 0) {
     return { fileCount: 0, files: [], trailingBytes: 0 };
   }
+  // Minimum entry size: version(1) + nameLen(3) + name(1) + size(4) + modified(6) + md5(16) = 31
   if (body.length < 6) {
     throw new Error(`Invalid file list body length: ${body.length}`);
   }
-  if (body[0] !== 0xff || body[1] !== 0xff) {
-    throw new Error(
-      `Invalid file list marker: ${toHex(body.subarray(0, 2))}`,
-    );
+  // P1 uses FF FF marker + U32BE file count header.
+  // H1 has no marker and no count — file entries start at offset 0.
+  const hasMarker = body[0] === 0xff && body[1] === 0xff;
+  let fileCount: number;
+  let cursor: number;
+  if (hasMarker) {
+    fileCount = readU32BE(body, 2);
+    cursor = 6;
+  } else {
+    // No header — parse entries until body runs out
+    fileCount = Infinity;
+    cursor = 0;
   }
 
-  const fileCount = readU32BE(body, 2);
   const files: HiDockFileEntry[] = [];
-  let cursor = 6;
 
   for (let index = 0; index < fileCount; index += 1) {
     if (cursor + 1 + 3 + 4 + 6 + 16 > body.length) {
@@ -126,7 +133,7 @@ export function parseHiDockFileListBody(body: Uint8Array): HiDockFileList {
   }
 
   return {
-    fileCount,
+    fileCount: files.length,
     files,
     trailingBytes: body.length - cursor,
   };
