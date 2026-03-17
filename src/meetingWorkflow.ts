@@ -1,12 +1,11 @@
 import { promises as fs } from "node:fs";
 
-import OpenAI from "openai";
-
 import { HiDockClient } from "./client.js";
 import { HiDockFileEntry } from "./fileList.js";
 import { DocumentKind, SavedMeetingDocument, truncateWords } from "./meetingStorage.js";
 import { LocalMeetingStorageAdapter, NotesStorageAdapter } from "./notesStorage.js";
 import { HiDockSkillOptions, HiDockWhisperSkill } from "./skill.js";
+import { formatSpeakerTranscript } from "./transcribe.js";
 
 const MONTH_NAME_TO_INDEX: Readonly<Record<string, number>> = {
   jan: 0,
@@ -26,6 +25,7 @@ const MONTH_NAME_TO_INDEX: Readonly<Record<string, number>> = {
 export interface MeetingWorkflowOptions extends HiDockSkillOptions {
   storageRootDir: string;
   summaryModel?: string;
+  ollamaHost?: string;
   storageAdapter?: NotesStorageAdapter;
 }
 
@@ -34,6 +34,7 @@ export interface MeetingSummaryResult {
   attendee: string;
   brief: string;
   summary: string;
+  speakerMap?: Map<number, string>;
 }
 
 export interface ProcessedRecordingResult {
@@ -49,7 +50,6 @@ export class HiDockMeetingWorkflow {
   private readonly transcribeSkill: HiDockWhisperSkill;
   private readonly storage: NotesStorageAdapter;
   private readonly options: MeetingWorkflowOptions;
-  private readonly openai: OpenAI;
 
   constructor(client: HiDockClient, options: MeetingWorkflowOptions) {
     this.client = client;
@@ -58,7 +58,6 @@ export class HiDockMeetingWorkflow {
     this.storage =
       options.storageAdapter ??
       new LocalMeetingStorageAdapter({ rootDir: options.storageRootDir });
-    this.openai = new OpenAI({ apiKey: options.apiKey });
   }
 
   async processRecording(
@@ -81,11 +80,25 @@ export class HiDockMeetingWorkflow {
 
     const transcription = await this.transcribeSkill.transcribeFile(file, onProgress);
     const timestamp = parseHiDockRecordingDate(file.fileName) ?? new Date();
-    const summary = await summarizeTranscriptWithModel(this.openai, {
-      transcript: transcription.text,
+
+    // Format transcript with speaker labels if available
+    const hasSpeakers = transcription.speakerSegments && transcription.speakerSegments.length > 0;
+    const transcriptForLlm = hasSpeakers
+      ? formatSpeakerTranscript(transcription.speakerSegments!)
+      : transcription.text;
+
+    const summary = await summarizeTranscriptWithOllama({
+      transcript: transcriptForLlm,
       sourceFileName: file.fileName,
+      hasSpeakerLabels: hasSpeakers ?? false,
       ...(this.options.summaryModel ? { model: this.options.summaryModel } : {}),
+      ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
     });
+
+    // Apply resolved speaker names back to transcript
+    const finalTranscript = summary.speakerMap && summary.speakerMap.size > 0
+      ? applySpeakerNames(transcriptForLlm, summary.speakerMap)
+      : transcriptForLlm;
 
     const normalized = {
       timestamp,
@@ -94,7 +107,7 @@ export class HiDockMeetingWorkflow {
       attendee: summary.attendee,
       brief: truncateWords(summary.brief, 14),
       summary: summary.summary,
-      transcript: transcription.text,
+      transcript: finalTranscript,
     };
 
     const saved: SavedMeetingDocument = documentType === "whisper"
@@ -180,23 +193,40 @@ export function parseHiDockRecordingDate(fileName: string): Date | null {
   return null;
 }
 
-async function summarizeTranscriptWithModel(
-  openai: OpenAI,
-  input: { transcript: string; model?: string; sourceFileName: string },
+async function summarizeTranscriptWithOllama(
+  input: {
+    transcript: string;
+    model?: string;
+    sourceFileName: string;
+    ollamaHost?: string;
+    hasSpeakerLabels?: boolean;
+  },
 ): Promise<MeetingSummaryResult> {
-  const model = input.model ?? "gpt-4o-mini";
+  const model = input.model ?? "qwen3.5:9b";
+  const host = input.ollamaHost ?? "http://localhost:11434";
   const transcript = input.transcript.trim();
   const clippedTranscript = transcript.slice(0, 30000);
-  const prompt =
-    "You are a meeting assistant. Return exactly these keys on separate lines:\n" +
-    "TITLE: <short title>\n" +
-    "ATTENDEE: <comma separated attendee names or Unknown>\n" +
-    "BRIEF: <max 14 words>\n" +
-    "SUMMARY: <2-4 concise sentences>\n\n" +
-    "Keep BRIEF <= 14 words.";
+
+  const prompt = input.hasSpeakerLabels
+    ? "You are a meeting assistant. The transcript has speaker labels like [Speaker 0], [Speaker 1].\n\n" +
+      "1. Identify real names from context (introductions, addressing by name).\n" +
+      "2. Map [Speaker N] to real names where possible.\n" +
+      "3. Return exactly these keys on separate lines:\n\n" +
+      "TITLE: <short title>\n" +
+      "ATTENDEE: <comma separated real names, or Speaker N if unidentified>\n" +
+      "SPEAKER_MAP: <Speaker 0=Name1, Speaker 1=Name2, ...>\n" +
+      "BRIEF: <max 14 words>\n" +
+      "SUMMARY: <2-4 concise sentences>\n\n" +
+      "Keep BRIEF <= 14 words. /no_think"
+    : "You are a meeting assistant. Return exactly these keys on separate lines:\n" +
+      "TITLE: <short title>\n" +
+      "ATTENDEE: <comma separated attendee names or Unknown>\n" +
+      "BRIEF: <max 14 words>\n" +
+      "SUMMARY: <2-4 concise sentences>\n\n" +
+      "Keep BRIEF <= 14 words. /no_think";
 
   try {
-    const completion = await openai.chat.completions.create({
+    const rawContent = await streamOllamaChat(host, {
       model,
       messages: [
         { role: "system", content: prompt },
@@ -207,11 +237,11 @@ async function summarizeTranscriptWithModel(
             `Transcript:\n${clippedTranscript || "(empty transcript)"}`,
         },
       ],
-      temperature: 0.2,
     });
 
-    const content = completion.choices[0]?.message?.content ?? "";
+    const content = stripThinkTags(rawContent);
     const parsed = parseSummaryBlock(content);
+    const speakerMap = input.hasSpeakerLabels ? parseSpeakerMap(content) : undefined;
     return {
       title: parsed.title || fallbackTitleFromTranscript(transcript),
       attendee: parsed.attendee || "Unknown",
@@ -220,6 +250,7 @@ async function summarizeTranscriptWithModel(
         parsed.summary ||
         fallbackSummaryFromTranscript(transcript) ||
         "No summary available.",
+      ...(speakerMap && speakerMap.size > 0 ? { speakerMap } : {}),
     };
   } catch {
     return {
@@ -229,6 +260,44 @@ async function summarizeTranscriptWithModel(
       summary: fallbackSummaryFromTranscript(transcript) || "No summary available.",
     };
   }
+}
+
+async function streamOllamaChat(
+  host: string,
+  body: { model: string; messages: { role: string; content: string }[] },
+): Promise<string> {
+  const response = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
+  }
+
+  let content = "";
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value, { stream: true });
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      try {
+        const obj = JSON.parse(line) as { message?: { content?: string }; done?: boolean };
+        if (obj.message?.content) content += obj.message.content;
+      } catch {
+        // partial JSON line, ignore
+      }
+    }
+  }
+  return content;
+}
+
+export function stripThinkTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 }
 
 function parseSummaryBlock(content: string): Partial<MeetingSummaryResult> {
@@ -275,4 +344,47 @@ function fallbackSummaryFromTranscript(transcript: string): string {
     return "";
   }
   return words.slice(0, 80).join(" ");
+}
+
+/**
+ * Parse a SPEAKER_MAP line from LLM output.
+ * Expected format: "SPEAKER_MAP: Speaker 0=Alice, Speaker 1=Bob"
+ */
+export function parseSpeakerMap(content: string): Map<number, string> {
+  const map = new Map<number, string>();
+  const line = extractLine(content, "SPEAKER_MAP");
+  if (!line) return map;
+
+  const pairs = line.split(",");
+  for (const pair of pairs) {
+    const match = /Speaker\s*(\d+)\s*=\s*(.+)/i.exec(pair.trim());
+    if (match) {
+      const index = Number(match[1]);
+      const name = (match[2] ?? "").trim();
+      if (name && !isNaN(index)) {
+        map.set(index, name);
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Replace [Speaker N] and [Speaker N @time] labels with resolved real names.
+ */
+export function applySpeakerNames(
+  transcript: string,
+  speakerMap: Map<number, string>,
+): string {
+  let result = transcript;
+  for (const [index, name] of speakerMap) {
+    // Handle [Speaker N @time] format (with timestamp)
+    result = result.replace(
+      new RegExp(`\\[Speaker ${index} @([\\d.]+)\\]`, "g"),
+      `[${name} @$1]`,
+    );
+    // Handle [Speaker N] format (without timestamp)
+    result = result.replaceAll(`[Speaker ${index}]`, `[${name}]`);
+  }
+  return result;
 }

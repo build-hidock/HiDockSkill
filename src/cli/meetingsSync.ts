@@ -26,6 +26,7 @@ export interface CliOptions {
   memdockTimeoutMs?: number | undefined;
   whisperModel: string;
   summaryModel: string;
+  ollamaHost: string;
   language?: string | undefined;
   prompt?: string | undefined;
   temperature?: number | undefined;
@@ -70,13 +71,6 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
 
   if (options.whisperOnly && options.meetingsOnly) {
     throw new Error("Use only one of --whisper-only or --meetings-only.");
-  }
-
-  const apiKey = process.env.OPENAI_API_KEY ?? "";
-  if (!options.dryRun && !apiKey) {
-    throw new Error(
-      "OPENAI_API_KEY is required. Export it before running meetings:sync.",
-    );
   }
 
   const stateStore = new SyncStateStore(options.stateFile);
@@ -130,9 +124,9 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
     });
 
     const workflow = new HiDockMeetingWorkflow(client, {
-      apiKey,
       whisperModel: options.whisperModel,
       summaryModel: options.summaryModel,
+      ollamaHost: options.ollamaHost,
       storageRootDir: options.storageDir,
       storageAdapter,
       ...(options.language ? { language: options.language } : {}),
@@ -259,9 +253,10 @@ export function parseArgs(
     memdockWorkspace: env.MEMDOCK_WORKSPACE || undefined,
     memdockCollection: env.MEMDOCK_COLLECTION || undefined,
     memdockTimeoutMs: undefined,
-    whisperModel: env.WHISPER_MODEL ?? "whisper-1",
-    summaryModel: env.SUMMARY_MODEL ?? "gpt-4o-mini",
-    language: env.WHISPER_LANGUAGE || undefined,
+    whisperModel: env.WHISPER_MODEL ?? "moonshine",
+    summaryModel: env.SUMMARY_MODEL ?? "qwen3.5:9b",
+    ollamaHost: env.OLLAMA_HOST ?? "http://localhost:11434",
+    language: (env.MOONSHINE_LANGUAGE ?? env.WHISPER_LANGUAGE) || undefined,
     prompt: env.WHISPER_PROMPT || undefined,
     temperature: undefined,
     limit: undefined,
@@ -331,6 +326,9 @@ export function parseArgs(
       case "--summary-model":
         options.summaryModel = readValue(argv, ++index, arg);
         break;
+      case "--ollama-host":
+        options.ollamaHost = readValue(argv, ++index, arg);
+        break;
       case "--language":
         options.language = readValue(argv, ++index, arg);
         break;
@@ -391,21 +389,21 @@ Options:
   --memdock-workspace <name>    Memdock workspace header override (optional)
   --memdock-collection <name>   Memdock collection header override (optional)
   --memdock-timeout-ms <n>      Memdock request timeout in ms (default: 10000)
-  --whisper-model <id>   Whisper model (default: whisper-1)
-  --summary-model <id>   Summary model (default: gpt-4o-mini)
-  --language <code>      Whisper language hint
-  --prompt <text>        Whisper prompt
-  --temperature <n>      Whisper temperature
+  --whisper-model <id>   Transcription model name (default: moonshine)
+  --summary-model <id>   Summary model (default: qwen3.5:9b)
+  --ollama-host <url>    Ollama API host (default: http://localhost:11434)
+  --language <code>      Transcription language hint
+  --prompt <text>        Whisper prompt (legacy, unused with moonshine)
+  --temperature <n>      Whisper temperature (legacy, unused with moonshine)
   --limit <n>            Process only newest n files
   --whisper-only         Process only Whsp recordings
   --meetings-only        Process only non-Whsp recordings
   --dry-run              List selected files without transcribing
   -h, --help             Show this help
 
-Required env:
-  OPENAI_API_KEY         Needed unless --dry-run
-
 Optional env:
+  OLLAMA_HOST            Ollama API host (default: http://localhost:11434)
+  MOONSHINE_LANGUAGE     Transcription language hint (e.g. en)
   HIDOCK_NOTES_BACKEND   local|memdock (default: local)
   MEMDOCK_BASE_URL       Memdock API base URL (required for memdock backend)
   MEMDOCK_API_KEY        Memdock bearer token (optional)

@@ -290,8 +290,8 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   #note-overlay.open { display: flex; opacity: 1; }
 
   #note-modal {
-    width: 900px;
-    max-width: 94vw;
+    width: 1200px;
+    max-width: 96vw;
     max-height: 92vh;
     background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
     border: 1px solid rgba(168,85,247,0.2);
@@ -377,6 +377,19 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     flex: 1;
     overflow-y: auto;
     padding: 0 28px 24px;
+    display: flex;
+    gap: 24px;
+  }
+  .modal-col-left {
+    flex: 1;
+    min-width: 0;
+    padding-top: 20px;
+  }
+  .modal-col-right {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Audio player */
@@ -439,7 +452,9 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     border: 1px solid rgba(168,85,247,0.08);
   }
   .note-text.transcript-text {
-    max-height: 320px;
+    flex: 1;
+    min-height: 200px;
+    max-height: calc(92vh - 220px);
     overflow-y: auto;
     padding: 14px 16px;
     background: rgba(13,1,23,0.5);
@@ -453,6 +468,45 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   .note-text.transcript-text::-webkit-scrollbar-thumb {
     background: rgba(168,85,247,0.2);
     border-radius: 2px;
+  }
+  .transcript-line {
+    margin-bottom: 10px;
+    line-height: 1.65;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+  .transcript-line:hover {
+    background: rgba(168,85,247,0.06);
+  }
+  .transcript-line.active {
+    background: rgba(168,85,247,0.1);
+    border-left-color: #a855f7;
+  }
+  .transcript-time {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-right: 6px;
+    font-variant-numeric: tabular-nums;
+    min-width: 38px;
+    opacity: 0.7;
+    cursor: pointer;
+  }
+  .transcript-time:hover { opacity: 1; color: #a855f7; }
+  .speaker-label {
+    display: inline-block;
+    color: #c084fc;
+    font-weight: 600;
+    background: rgba(168,85,247,0.12);
+    border: 1px solid rgba(168,85,247,0.22);
+    border-radius: 6px;
+    padding: 1px 8px;
+    margin-right: 6px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
   }
   .note-loading-text {
     color: var(--text-dim);
@@ -859,17 +913,21 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       <div class="modal-meta" style="margin-top:8px;" id="nm-attendees-wrap"></div>
     </div>
     <div class="modal-body">
-      <div class="audio-section" id="nm-audio-section">
-        <div class="audio-section-label">&#x1f50a; Audio Recording</div>
-        <div class="audio-player" id="nm-audio-player"></div>
+      <div class="modal-col-left">
+        <div class="note-section">
+          <div class="note-section-label"><span class="sec-icon">&#x2728;</span> Summary</div>
+          <div class="note-text summary-text" id="nm-summary"></div>
+        </div>
       </div>
-      <div class="note-section">
-        <div class="note-section-label"><span class="sec-icon">&#x2728;</span> Summary</div>
-        <div class="note-text summary-text" id="nm-summary"></div>
-      </div>
-      <div class="note-section">
-        <div class="note-section-label"><span class="sec-icon">&#x1f399;</span> Transcript</div>
-        <div class="note-text transcript-text" id="nm-transcript"></div>
+      <div class="modal-col-right">
+        <div class="audio-section" id="nm-audio-section">
+          <div class="audio-section-label">&#x1f50a; Audio Recording</div>
+          <div class="audio-player" id="nm-audio-player"></div>
+        </div>
+        <div class="note-section" style="flex:1; display:flex; flex-direction:column;">
+          <div class="note-section-label"><span class="sec-icon">&#x1f399;</span> Transcript</div>
+          <div class="note-text transcript-text" id="nm-transcript"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1436,6 +1494,105 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       openNoteModal(d);
     });
 
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function fmtTime(sec) {
+      var m = Math.floor(sec / 60);
+      var s = Math.floor(sec % 60);
+      return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    function formatTranscriptHtml(transcript) {
+      if (!transcript) return "";
+      var lines = transcript.split("\\n");
+      // Match [Name @seconds]: or [Name]:
+      var speakerTimePattern = /^\\[([^\\]@]+?)(?:\\s+@([\\d.]+))?\\]:\\s*/;
+      var hasSpeakers = lines.some(function(l) { return speakerTimePattern.test(l); });
+      if (!hasSpeakers) return '<div class="transcript-line">' + escapeHtml(transcript) + '</div>';
+      return lines.map(function(line) {
+        var m = speakerTimePattern.exec(line);
+        if (m) {
+          var name = escapeHtml(m[1].trim());
+          var startSec = m[2] ? parseFloat(m[2]) : -1;
+          var text = escapeHtml(line.slice(m[0].length));
+          var timeHtml = startSec >= 0
+            ? '<span class="transcript-time" data-seek="' + startSec + '">' + fmtTime(startSec) + '</span>'
+            : '';
+          return '<div class="transcript-line" data-start="' + startSec + '">'
+            + timeHtml
+            + '<span class="speaker-label">' + name + '</span>'
+            + text + '</div>';
+        }
+        if (line.trim() === "") return "";
+        return '<div class="transcript-line">' + escapeHtml(line) + '</div>';
+      }).join("");
+    }
+
+    // Audio-transcript sync state
+    var _modalAudioEl = null;
+    var _transcriptLines = [];
+    var _userScrolling = false;
+    var _userScrollTimer = null;
+
+    function setupAudioSync() {
+      var transcriptEl = document.getElementById("nm-transcript");
+      _transcriptLines = Array.from(transcriptEl.querySelectorAll(".transcript-line[data-start]"));
+      _transcriptLines.sort(function(a, b) {
+        return parseFloat(a.dataset.start) - parseFloat(b.dataset.start);
+      });
+
+      // Detect user scrolling — suppress auto-scroll for 4 seconds after
+      _userScrolling = false;
+      transcriptEl.addEventListener("wheel", function() {
+        _userScrolling = true;
+        clearTimeout(_userScrollTimer);
+        _userScrollTimer = setTimeout(function() { _userScrolling = false; }, 4000);
+      });
+      transcriptEl.addEventListener("touchmove", function() {
+        _userScrolling = true;
+        clearTimeout(_userScrollTimer);
+        _userScrollTimer = setTimeout(function() { _userScrolling = false; }, 4000);
+      });
+
+      // Click transcript line to seek (also re-enables auto-scroll)
+      transcriptEl.addEventListener("click", function(e) {
+        var line = e.target.closest(".transcript-line[data-start]");
+        if (!line) return;
+        var t = parseFloat(line.dataset.start);
+        if (t < 0 || !_modalAudioEl) return;
+        _userScrolling = false;
+        clearTimeout(_userScrollTimer);
+        _modalAudioEl.currentTime = t;
+        _modalAudioEl.play();
+      });
+    }
+
+    function onAudioTimeUpdate() {
+      if (!_modalAudioEl || _transcriptLines.length === 0) return;
+      var ct = _modalAudioEl.currentTime;
+      var activeIdx = -1;
+      for (var i = _transcriptLines.length - 1; i >= 0; i--) {
+        if (parseFloat(_transcriptLines[i].dataset.start) <= ct) { activeIdx = i; break; }
+      }
+      _transcriptLines.forEach(function(el, idx) {
+        el.classList.toggle("active", idx === activeIdx);
+      });
+      // Auto-scroll only when user is not manually scrolling
+      if (activeIdx >= 0 && !_userScrolling) {
+        var activeLine = _transcriptLines[activeIdx];
+        var container = document.getElementById("nm-transcript");
+        var lineTop = activeLine.offsetTop - container.offsetTop;
+        var lineBot = lineTop + activeLine.offsetHeight;
+        var scrollTop = container.scrollTop;
+        var viewH = container.clientHeight;
+        if (lineTop < scrollTop || lineBot > scrollTop + viewH) {
+          container.scrollTop = lineTop - viewH / 3;
+        }
+      }
+    }
+
     window._openNoteModal = openNoteModal;
     function openNoteModal(d) {
       document.getElementById("nm-title").textContent = d.title;
@@ -1452,6 +1609,13 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
         attWrap.appendChild(tag);
       });
 
+      // Reset audio sync state
+      if (_modalAudioEl) {
+        _modalAudioEl.removeEventListener("timeupdate", onAudioTimeUpdate);
+        _modalAudioEl = null;
+      }
+      _transcriptLines = [];
+
       // Audio player
       var audioPlayer = document.getElementById("nm-audio-player");
       audioPlayer.innerHTML = '<div class="audio-unavailable">Checking audio...</div>';
@@ -1459,6 +1623,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
         .then(function(res) {
           if (res.ok) {
             audioPlayer.innerHTML = '<audio controls preload="auto" src="/audio?id=' + encodeURIComponent(d.id) + '"></audio>';
+            _modalAudioEl = audioPlayer.querySelector("audio");
+            if (_modalAudioEl) {
+              _modalAudioEl.addEventListener("timeupdate", onAudioTimeUpdate);
+            }
           } else {
             audioPlayer.innerHTML = '<div class="audio-unavailable">Audio not available for this recording</div>';
           }
@@ -1478,7 +1646,8 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
         .then(function(note) {
           if (note) {
             summaryEl.textContent = note.summary || "(no summary)";
-            transcriptEl.textContent = note.transcript || "(no transcript)";
+            transcriptEl.innerHTML = formatTranscriptHtml(note.transcript || "(no transcript)");
+            setupAudioSync();
           } else {
             summaryEl.textContent = "(unable to load)";
           }
@@ -1500,11 +1669,15 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     window.closeNoteModal = function() {
       var overlay = document.getElementById("note-overlay");
       overlay.classList.remove("open");
+      if (_modalAudioEl) {
+        _modalAudioEl.removeEventListener("timeupdate", onAudioTimeUpdate);
+      }
       setTimeout(function() {
         overlay.style.display = "none";
-        // Stop audio if playing
         var audio = overlay.querySelector("audio");
         if (audio) { audio.pause(); }
+        _modalAudioEl = null;
+        _transcriptLines = [];
       }, 250);
     };
 

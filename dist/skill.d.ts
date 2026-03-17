@@ -1,14 +1,15 @@
 import { HiDockClient } from "./client.js";
 import { HiDockFileEntry } from "./fileList.js";
-import { WhisperTranscriptionOutput } from "./whisper.js";
+import { TranscriptionOutput } from "./transcribe.js";
 export interface HiDockSkillOptions {
-    apiKey: string;
+    apiKey?: string;
     whisperModel?: string;
     language?: string;
     prompt?: string;
     temperature?: number;
+    pythonBin?: string;
 }
-export interface FileTranscriptionResult extends WhisperTranscriptionOutput {
+export interface FileTranscriptionResult extends TranscriptionOutput {
     fileName: string;
     fileSize: number;
     fileVersion: number;

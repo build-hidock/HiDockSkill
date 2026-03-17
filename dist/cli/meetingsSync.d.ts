@@ -10,6 +10,7 @@ export interface CliOptions {
     memdockTimeoutMs?: number | undefined;
     whisperModel: string;
     summaryModel: string;
+    ollamaHost: string;
     language?: string | undefined;
     prompt?: string | undefined;
     temperature?: number | undefined;

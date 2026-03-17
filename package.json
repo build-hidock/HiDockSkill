@@ -21,7 +21,6 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "openai": "^6.22.0",
     "usb": "^2.17.0"
   },
   "devDependencies": {

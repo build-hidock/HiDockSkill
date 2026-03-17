@@ -124,9 +124,35 @@ export function startGalaxyServer(
         const tryServeAudio = (audioPath: string, mimeType: string): void => {
           fs.stat(audioPath)
             .then((stat) => {
+              const total = stat.size;
+              const rangeHeader = req.headers.range;
+
+              if (rangeHeader) {
+                const match = /bytes=(\d+)-(\d*)/.exec(rangeHeader);
+                if (match) {
+                  const start = Number(match[1]);
+                  const end = match[2] ? Number(match[2]) : total - 1;
+                  res.writeHead(206, {
+                    "Content-Type": mimeType,
+                    "Content-Range": `bytes ${start}-${end}/${total}`,
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": (end - start + 1).toString(),
+                    "Cache-Control": "no-cache",
+                  });
+                  if (isHead) {
+                    res.end();
+                  } else {
+                    fs.readFile(audioPath).then((data) => res.end(data.subarray(start, end + 1)));
+                  }
+                  log(`${req.method} /audio -> 206 (${start}-${end}/${total})`);
+                  return;
+                }
+              }
+
               res.writeHead(200, {
                 "Content-Type": mimeType,
-                "Content-Length": stat.size.toString(),
+                "Content-Length": total.toString(),
+                "Accept-Ranges": "bytes",
                 "Cache-Control": "no-cache",
               });
               if (isHead) {

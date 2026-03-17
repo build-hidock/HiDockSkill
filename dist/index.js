@@ -5,7 +5,7 @@ export * from "./parsers.js";
 export * from "./fileList.js";
 export * from "./transport.js";
 export * from "./client.js";
-export * from "./whisper.js";
+export * from "./transcribe.js";
 export * from "./skill.js";
 export * from "./nodeUsb.js";
 export * from "./meetingStorage.js";

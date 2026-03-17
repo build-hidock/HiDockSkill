@@ -1,19 +1,20 @@
 import { HiDockClient } from "./client.js";
 import { HiDockFileEntry } from "./fileList.js";
 import {
-  WhisperTranscriptionOutput,
-  transcribeWithWhisper,
-} from "./whisper.js";
+  TranscriptionOutput,
+  transcribeAudio,
+} from "./transcribe.js";
 
 export interface HiDockSkillOptions {
-  apiKey: string;
+  apiKey?: string;
   whisperModel?: string;
   language?: string;
   prompt?: string;
   temperature?: number;
+  pythonBin?: string;
 }
 
-export interface FileTranscriptionResult extends WhisperTranscriptionOutput {
+export interface FileTranscriptionResult extends TranscriptionOutput {
   fileName: string;
   fileSize: number;
   fileVersion: number;
@@ -42,19 +43,14 @@ export class HiDockWhisperSkill {
       this.client.downloadFile(file, downloadOptions)
     );
 
-    const whisperInput = {
-      apiKey: this.options.apiKey,
+    const transcribeInput = {
       audioBytes,
       sourceFileName: file.fileName,
       fileVersion: file.fileVersion,
-      ...(this.options.whisperModel ? { model: this.options.whisperModel } : {}),
       ...(this.options.language ? { language: this.options.language } : {}),
-      ...(this.options.prompt ? { prompt: this.options.prompt } : {}),
-      ...(typeof this.options.temperature === "number"
-        ? { temperature: this.options.temperature }
-        : {}),
+      ...(this.options.pythonBin ? { pythonBin: this.options.pythonBin } : {}),
     };
-    const transcript = await transcribeWithWhisper(whisperInput);
+    const transcript = await transcribeAudio(transcribeInput);
 
     return {
       ...transcript,
