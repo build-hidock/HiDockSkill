@@ -43,4 +43,19 @@ export declare function parseSpeakerMap(content: string): Map<number, string>;
  * Replace [Speaker N] and [Speaker N @time] labels with resolved real names.
  */
 export declare function applySpeakerNames(transcript: string, speakerMap: Map<number, string>): string;
+/**
+ * Parse a JSON speaker map from LLM output.
+ * Accepts: {"0": "Alice", "1": "Bob"} or {"Speaker 0": "Alice", ...}
+ */
+export declare function parseSpeakerMapJson(content: string): Map<number, string>;
+/**
+ * Dedicated LLM call to resolve speaker identities from transcript context.
+ * Uses a short, focused prompt and parses multiple output formats.
+ */
+export declare function resolveSpeakerNames(input: {
+    transcript: string;
+    speakerCount: number;
+    model?: string;
+    ollamaHost?: string;
+}): Promise<Map<number, string>>;
 //# sourceMappingURL=meetingWorkflow.d.ts.map

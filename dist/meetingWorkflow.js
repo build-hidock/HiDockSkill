@@ -58,15 +58,29 @@ export class HiDockMeetingWorkflow {
             ...(this.options.summaryModel ? { model: this.options.summaryModel } : {}),
             ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
         });
+        // Resolve speaker names with a dedicated focused LLM call
+        let speakerMap = summary.speakerMap ?? new Map();
+        if (hasSpeakers && speakerMap.size === 0 && (transcription.speakerCount ?? 0) > 0) {
+            speakerMap = await resolveSpeakerNames({
+                transcript: transcriptForLlm,
+                speakerCount: transcription.speakerCount,
+                ...(this.options.summaryModel ? { model: this.options.summaryModel } : {}),
+                ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
+            });
+        }
         // Apply resolved speaker names back to transcript
-        const finalTranscript = summary.speakerMap && summary.speakerMap.size > 0
-            ? applySpeakerNames(transcriptForLlm, summary.speakerMap)
+        const finalTranscript = speakerMap.size > 0
+            ? applySpeakerNames(transcriptForLlm, speakerMap)
             : transcriptForLlm;
+        // Update attendee list with resolved names
+        const resolvedAttendee = speakerMap.size > 0
+            ? [...speakerMap.values()].filter((n) => n !== "Unknown").join(", ") || summary.attendee
+            : summary.attendee;
         const normalized = {
             timestamp,
             sourceFileName: file.fileName,
             title: summary.title,
-            attendee: summary.attendee,
+            attendee: resolvedAttendee,
             brief: truncateWords(summary.brief, 14),
             summary: summary.summary,
             transcript: finalTranscript,
@@ -303,5 +317,94 @@ export function applySpeakerNames(transcript, speakerMap) {
         result = result.replaceAll(`[Speaker ${index}]`, `[${name}]`);
     }
     return result;
+}
+/**
+ * Parse a JSON speaker map from LLM output.
+ * Accepts: {"0": "Alice", "1": "Bob"} or {"Speaker 0": "Alice", ...}
+ */
+export function parseSpeakerMapJson(content) {
+    const map = new Map();
+    // Extract first JSON object from the content
+    const jsonMatch = /\{[^{}]*\}/.exec(content);
+    if (!jsonMatch)
+        return map;
+    try {
+        const obj = JSON.parse(jsonMatch[0]);
+        for (const [key, name] of Object.entries(obj)) {
+            if (typeof name !== "string" || !name.trim())
+                continue;
+            const trimmed = name.trim();
+            // Skip unresolved placeholders
+            if (/^unknown$/i.test(trimmed) || /^speaker\s*\d+$/i.test(trimmed))
+                continue;
+            // Accept "0", "Speaker 0", "speaker_0" etc.
+            const numMatch = /(\d+)/.exec(key);
+            if (numMatch) {
+                map.set(Number(numMatch[1]), trimmed);
+            }
+        }
+    }
+    catch {
+        // Not valid JSON
+    }
+    return map;
+}
+/**
+ * Dedicated LLM call to resolve speaker identities from transcript context.
+ * Uses a short, focused prompt and parses multiple output formats.
+ */
+export async function resolveSpeakerNames(input) {
+    const host = input.ollamaHost ?? "http://localhost:11434";
+    const model = input.model ?? "qwen3.5:9b";
+    // Only send first 5000 chars — names are usually revealed early
+    const clipped = input.transcript.slice(0, 5000);
+    const speakers = Array.from({ length: input.speakerCount }, (_, i) => i);
+    const prompt = `Who is each speaker? List each as "Speaker N = Name".\n` +
+        `Example:\nSpeaker 0 = Alice\nSpeaker 1 = Bob\n\n` +
+        `If unknown, write "Speaker N = Unknown".`;
+    try {
+        const rawContent = await streamOllamaChat(host, {
+            model,
+            messages: [
+                { role: "system", content: prompt },
+                { role: "user", content: clipped },
+            ],
+        });
+        // Strip think tags and model artifacts (Qwen special tokens, etc.)
+        const content = stripThinkTags(rawContent)
+            .replace(/<\|[^|]*\|>/g, "")
+            .replace(/\|>.*$/s, "")
+            .trim();
+        // Try JSON parse first
+        const jsonMap = parseSpeakerMapJson(content);
+        if (jsonMap.size > 0)
+            return jsonMap;
+        // Try "Speaker N = Name" pattern (line by line)
+        const lineMap = new Map();
+        for (const line of content.split("\n")) {
+            const match = /Speaker\s*(\d+)\s*[=:]\s*(.+)/i.exec(line);
+            if (match) {
+                const idx = Number(match[1]);
+                const name = (match[2] ?? "").replace(/[*_`"]/g, "").trim();
+                if (name &&
+                    !isNaN(idx) &&
+                    !/^unknown$/i.test(name) &&
+                    !/^speaker\s*\d+$/i.test(name) &&
+                    name.length <= 40 && // Real names are short
+                    !/[.!?]/.test(name) && // Not a sentence
+                    name.split(/\s+/).length <= 5 // Max 5 words
+                ) {
+                    lineMap.set(idx, name);
+                }
+            }
+        }
+        if (lineMap.size > 0)
+            return lineMap;
+        // Fallback: try SPEAKER_MAP format
+        return parseSpeakerMap(content);
+    }
+    catch {
+        return new Map();
+    }
 }
 //# sourceMappingURL=meetingWorkflow.js.map

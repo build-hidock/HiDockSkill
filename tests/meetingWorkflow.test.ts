@@ -4,6 +4,7 @@ import {
   isWhisperRecording,
   parseHiDockRecordingDate,
   parseSpeakerMap,
+  parseSpeakerMapJson,
   applySpeakerNames,
 } from "../src/meetingWorkflow.js";
 
@@ -61,6 +62,47 @@ describe("parseSpeakerMap", () => {
     const map = parseSpeakerMap(content);
     expect(map.get(0)).toBe("Alice");
     expect(map.get(1)).toBe("Bob");
+  });
+});
+
+describe("parseSpeakerMapJson", () => {
+  it("parses simple numeric keys", () => {
+    const content = '{"0": "Steve Jobs", "1": "Interviewer"}';
+    const map = parseSpeakerMapJson(content);
+    expect(map.size).toBe(2);
+    expect(map.get(0)).toBe("Steve Jobs");
+    expect(map.get(1)).toBe("Interviewer");
+  });
+
+  it("parses Speaker N keys", () => {
+    const content = '{"Speaker 0": "Alice", "Speaker 1": "Bob"}';
+    const map = parseSpeakerMapJson(content);
+    expect(map.get(0)).toBe("Alice");
+    expect(map.get(1)).toBe("Bob");
+  });
+
+  it("extracts JSON from surrounding text", () => {
+    const content = 'Here are the speakers:\n{"0": "Alice", "1": "Bob"}\nDone.';
+    const map = parseSpeakerMapJson(content);
+    expect(map.get(0)).toBe("Alice");
+    expect(map.get(1)).toBe("Bob");
+  });
+
+  it("skips Unknown values", () => {
+    const content = '{"0": "Steve", "1": "Unknown", "2": ""}';
+    const map = parseSpeakerMapJson(content);
+    expect(map.size).toBe(1);
+    expect(map.get(0)).toBe("Steve");
+  });
+
+  it("returns empty map for non-JSON", () => {
+    const map = parseSpeakerMapJson("No JSON here");
+    expect(map.size).toBe(0);
+  });
+
+  it("returns empty map for invalid JSON", () => {
+    const map = parseSpeakerMapJson("{broken json}");
+    expect(map.size).toBe(0);
   });
 });
 

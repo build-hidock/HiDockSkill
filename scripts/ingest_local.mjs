@@ -14,7 +14,9 @@ import { parseMoonshineOutput, formatSpeakerTranscript } from "../dist/transcrib
 import {
   stripThinkTags,
   parseSpeakerMap,
+  parseSpeakerMapJson,
   applySpeakerNames,
+  resolveSpeakerNames,
 } from "../dist/meetingWorkflow.js";
 import { MeetingStorage, truncateWords } from "../dist/meetingStorage.js";
 import { buildGalaxyData } from "../dist/galaxyData.js";
@@ -149,11 +151,30 @@ async function main() {
   const brief = extractLine(llmContent, "BRIEF") || speakerTranscript.slice(0, 60);
   const summary = extractSummary(llmContent) || llmContent.slice(0, 500);
 
-  // Resolve speaker names
-  const speakerMap = hasSpeakers ? parseSpeakerMap(llmContent) : new Map();
+  // Try to resolve speaker names from summary output first
+  let speakerMap = hasSpeakers ? parseSpeakerMap(llmContent) : new Map();
+  if (speakerMap.size === 0 && hasSpeakers) {
+    speakerMap = parseSpeakerMapJson(llmContent);
+  }
+
+  // If still no names, do a dedicated speaker resolution call
+  if (speakerMap.size === 0 && hasSpeakers && parsed.speakerCount > 0) {
+    console.log("[3.5/5] Resolving speaker names (dedicated call)...");
+    speakerMap = await resolveSpeakerNames({
+      transcript: speakerTranscript,
+      speakerCount: parsed.speakerCount,
+      model,
+      ollamaHost: host,
+    });
+  }
+
   const finalTranscript = speakerMap.size > 0
     ? applySpeakerNames(speakerTranscript, speakerMap)
     : speakerTranscript;
+
+  const resolvedAttendee = speakerMap.size > 0
+    ? [...speakerMap.values()].filter(n => n !== "Unknown").join(", ") || attendee
+    : attendee;
 
   if (speakerMap.size > 0) {
     console.log("     Speaker map: " +
@@ -167,7 +188,7 @@ async function main() {
     timestamp: new Date(),
     sourceFileName,
     title,
-    attendee,
+    attendee: resolvedAttendee,
     brief: truncateWords(brief, 14),
     summary,
     transcript: finalTranscript,

@@ -18,7 +18,9 @@ import {
 import {
   stripThinkTags,
   parseSpeakerMap,
+  parseSpeakerMapJson,
   applySpeakerNames,
+  resolveSpeakerNames,
 } from "../dist/meetingWorkflow.js";
 
 function execPromise(command, args) {
@@ -141,14 +143,26 @@ async function main() {
   const attendee = extractLine(llmContent, "ATTENDEE") || "Unknown";
   const brief = extractLine(llmContent, "BRIEF") || "";
   const summary = extractSummary(llmContent) || llmContent.slice(0, 500);
-  const speakerMap = hasSpeakers ? parseSpeakerMap(llmContent) : new Map();
+  let speakerMap = hasSpeakers ? parseSpeakerMap(llmContent) : new Map();
+  if (speakerMap.size === 0 && hasSpeakers) {
+    speakerMap = parseSpeakerMapJson(llmContent);
+  }
+  if (speakerMap.size === 0 && hasSpeakers && parsed.speakerCount > 0) {
+    console.log("[3.5/4] Resolving speaker names (dedicated call)...");
+    speakerMap = await resolveSpeakerNames({
+      transcript: speakerTranscript,
+      speakerCount: parsed.speakerCount,
+      model,
+      ollamaHost: host,
+    });
+  }
   const finalTranscript = speakerMap.size > 0
     ? applySpeakerNames(speakerTranscript, speakerMap)
     : speakerTranscript;
 
   console.log(`     Speaker map: ${speakerMap.size > 0
     ? [...speakerMap.entries()].map(([i, n]) => `Speaker ${i}→${n}`).join(", ")
-    : "(none resolved from structured output — see summary for identifications)"}`);
+    : "(no names resolved)"}`);
 
   // Step 4: Write markdown
   console.log("[4/4] Writing markdown files...");
