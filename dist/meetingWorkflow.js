@@ -350,15 +350,20 @@ export function parseSpeakerMapJson(content) {
     return map;
 }
 /**
- * Dedicated LLM call to resolve speaker identities from transcript context.
- * Uses a short, focused prompt and parses multiple output formats.
+ * Resolve speaker names using two strategies:
+ * 1. Heuristic: detect names addressed in preceding speaker's lines
+ *    (e.g., Speaker 0 says "Steve, when you..." → next Speaker 1 = Steve)
+ * 2. LLM fallback: dedicated focused call if heuristic finds nothing
  */
 export async function resolveSpeakerNames(input) {
+    // Strategy 1: Heuristic name detection from transcript
+    const heuristicMap = extractNamesFromTranscript(input.transcript);
+    if (heuristicMap.size > 0)
+        return heuristicMap;
+    // Strategy 2: LLM call
     const host = input.ollamaHost ?? "http://localhost:11434";
     const model = input.model ?? "qwen3.5:9b";
-    // Only send first 5000 chars — names are usually revealed early
     const clipped = input.transcript.slice(0, 5000);
-    const speakers = Array.from({ length: input.speakerCount }, (_, i) => i);
     const prompt = `Who is each speaker? List each as "Speaker N = Name".\n` +
         `Example:\nSpeaker 0 = Alice\nSpeaker 1 = Bob\n\n` +
         `If unknown, write "Speaker N = Unknown".`;
@@ -370,41 +375,101 @@ export async function resolveSpeakerNames(input) {
                 { role: "user", content: clipped },
             ],
         });
-        // Strip think tags and model artifacts (Qwen special tokens, etc.)
         const content = stripThinkTags(rawContent)
             .replace(/<\|[^|]*\|>/g, "")
             .replace(/\|>.*$/s, "")
             .trim();
-        // Try JSON parse first
         const jsonMap = parseSpeakerMapJson(content);
         if (jsonMap.size > 0)
             return jsonMap;
-        // Try "Speaker N = Name" pattern (line by line)
         const lineMap = new Map();
         for (const line of content.split("\n")) {
             const match = /Speaker\s*(\d+)\s*[=:]\s*(.+)/i.exec(line);
             if (match) {
                 const idx = Number(match[1]);
                 const name = (match[2] ?? "").replace(/[*_`"]/g, "").trim();
-                if (name &&
-                    !isNaN(idx) &&
-                    !/^unknown$/i.test(name) &&
-                    !/^speaker\s*\d+$/i.test(name) &&
-                    name.length <= 40 && // Real names are short
-                    !/[.!?]/.test(name) && // Not a sentence
-                    name.split(/\s+/).length <= 5 // Max 5 words
-                ) {
+                if (name && !isNaN(idx) &&
+                    !/^unknown$/i.test(name) && !/^speaker\s*\d+$/i.test(name) &&
+                    name.length <= 40 && !/[.!?]/.test(name) && name.split(/\s+/).length <= 5) {
                     lineMap.set(idx, name);
                 }
             }
         }
         if (lineMap.size > 0)
             return lineMap;
-        // Fallback: try SPEAKER_MAP format
         return parseSpeakerMap(content);
     }
     catch {
         return new Map();
     }
+}
+/**
+ * Extract speaker names from transcript using address patterns.
+ * Looks for lines where Speaker A says "Name, ..." then Speaker B responds →
+ * Speaker B is likely "Name".
+ * Also looks for self-introductions: "I'm Name" / "my name is Name" / "I am Name".
+ */
+export function extractNamesFromTranscript(transcript) {
+    const map = new Map();
+    const lines = transcript.split("\n");
+    const labelPattern = /^\[(?:Speaker\s*(\d+))[^[\]]*\]:\s*/;
+    // Common first names / titles that confirm a name address
+    const isPlausibleName = (n) => {
+        if (n.length < 2 || n.length > 25)
+            return false;
+        if (!/^[A-Z]/.test(n))
+            return false; // Must start uppercase
+        if (/^(The|This|That|What|How|Why|Where|When|Who|If|So|But|And|Or|Yeah|Yes|No|OK|Oh|Well|Now|Hi|Hey|My|We|You|I|It|A|An)$/i.test(n))
+            return false;
+        if (n.split(/\s+/).length > 3)
+            return false;
+        return true;
+    };
+    for (let i = 0; i < lines.length - 1; i++) {
+        const curLine = lines[i] ?? "";
+        const nextLine = lines[i + 1] ?? "";
+        const curMatch = labelPattern.exec(curLine);
+        const nextMatch = labelPattern.exec(nextLine);
+        if (!curMatch || !nextMatch)
+            continue;
+        const curSpeaker = Number(curMatch[1]);
+        const nextSpeaker = Number(nextMatch[1]);
+        if (curSpeaker === nextSpeaker)
+            continue;
+        const curText = curLine.slice(curMatch[0].length);
+        // Pattern: "Name, when you..." / "Name, what..." — addressing next speaker
+        const addressMatch = /^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?),\s/.exec(curText);
+        if (addressMatch) {
+            const name = addressMatch[1] ?? "";
+            if (isPlausibleName(name) && !map.has(nextSpeaker)) {
+                map.set(nextSpeaker, name);
+            }
+            continue;
+        }
+        // Pattern: "Thank you, Name" / "right, Name" at end of line
+        const endAddressMatch = /,\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*[.?!]?\s*$/.exec(curText);
+        if (endAddressMatch) {
+            const name = endAddressMatch[1] ?? "";
+            if (isPlausibleName(name) && !map.has(nextSpeaker)) {
+                map.set(nextSpeaker, name);
+            }
+        }
+    }
+    // Self-introductions: "I'm Name" / "my name is Name"
+    for (const line of lines) {
+        const lineMatch = labelPattern.exec(line);
+        if (!lineMatch)
+            continue;
+        const speakerIdx = Number(lineMatch[1]);
+        const text = line.slice(lineMatch[0].length);
+        const selfIntro = /(?:I'm|I am|my name is|this is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/i.exec(text);
+        if (selfIntro) {
+            const name = selfIntro[1] ?? "";
+            if (isPlausibleName(name) && !map.has(speakerIdx)) {
+                map.set(speakerIdx, name);
+            }
+        }
+    }
+    return map;
 }
 //# sourceMappingURL=meetingWorkflow.js.map

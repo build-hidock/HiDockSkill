@@ -49,8 +49,10 @@ export declare function applySpeakerNames(transcript: string, speakerMap: Map<nu
  */
 export declare function parseSpeakerMapJson(content: string): Map<number, string>;
 /**
- * Dedicated LLM call to resolve speaker identities from transcript context.
- * Uses a short, focused prompt and parses multiple output formats.
+ * Resolve speaker names using two strategies:
+ * 1. Heuristic: detect names addressed in preceding speaker's lines
+ *    (e.g., Speaker 0 says "Steve, when you..." → next Speaker 1 = Steve)
+ * 2. LLM fallback: dedicated focused call if heuristic finds nothing
  */
 export declare function resolveSpeakerNames(input: {
     transcript: string;
@@ -58,4 +60,11 @@ export declare function resolveSpeakerNames(input: {
     model?: string;
     ollamaHost?: string;
 }): Promise<Map<number, string>>;
+/**
+ * Extract speaker names from transcript using address patterns.
+ * Looks for lines where Speaker A says "Name, ..." then Speaker B responds →
+ * Speaker B is likely "Name".
+ * Also looks for self-introductions: "I'm Name" / "my name is Name" / "I am Name".
+ */
+export declare function extractNamesFromTranscript(transcript: string): Map<number, string>;
 //# sourceMappingURL=meetingWorkflow.d.ts.map
