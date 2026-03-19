@@ -15,3 +15,10 @@
 - Preventative rule: USB protocol parsers must not assume a fixed header format across device models. Always detect header markers and fall back to headerless parsing when absent.
 - Preventative rule: Long-running servers (galaxy, watcher) must not restart on repeated events. Check if already running before recreating — repeated USB plug-in events are noisy and will wipe in-memory state.
 - Preventative rule: All-or-nothing state persistence (only save on full success) causes infinite re-processing when any file fails. Save state incrementally per item.
+
+## 2026-03-19
+- Preventative rule: Don't rely on small local LLMs (qwen3.5:9b) for structured output compliance. They hallucinate names, ignore format instructions, and produce model artifacts. Always have a rule-based heuristic fallback for critical parsing (speaker names, metadata extraction).
+- Preventative rule: When LLM output contains markdown with `## ` headings, note-parsing regexes that stop at `(?=\n## )` will break. Anchor to specific section boundaries (e.g., `## Summary` to `## Transcript`) not generic heading patterns.
+- Preventative rule: LLM outputs from Qwen models leak special tokens (`<|endoftext|>`, `<|im_start|>user`). Always sanitize with a dedicated function that strips these artifacts — don't rely on `stripThinkTags` alone.
+- Preventative rule: Ollama `stream: false` mode can hang indefinitely on long prompts or thinking models. Always use `stream: true` with incremental reading to avoid header timeouts.
+- Preventative rule: Browser `<audio>` elements require HTTP Range request support (`Accept-Ranges: bytes`, 206 responses) for seeking. Without it, clicking the progress bar does nothing.
