@@ -191,7 +191,7 @@ export function startGalaxyServer(
         fs.readFile(node.notePath, "utf8")
           .then((content) => {
             const summaryMatch = content.match(
-              /## Summary\n([\s\S]*?)(?=\n## |\n#\s|$)/,
+              /## Summary\n([\s\S]*?)(?=\n## Transcript\b|$)/,
             );
             const transcriptMatch = content.match(
               /## Transcript\n([\s\S]*?)$/,
