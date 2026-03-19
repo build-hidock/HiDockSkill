@@ -151,28 +151,51 @@ export function parseHiDockRecordingDate(fileName) {
     }
     return null;
 }
+const MEETING_SUMMARY_PROMPT = "You are a professional meeting summarizing assistant.\n\n" +
+    'Please use this format, but don\'t use "topic 1", "subtopic 1", "summary", use the summarization content instead.\n\n' +
+    "## About Meeting\n" +
+    "Date & Time: [insert meeting date and time]\n" +
+    "Location: [insert location]\n" +
+    "Attendee: [insert names]\n\n" +
+    "## Meeting Outline\n" +
+    "### Topic 1\n" +
+    "- subtopic 1: summary description of subtopic 1\n" +
+    "- subtopic 2: summary description of subtopic 2\n" +
+    "- subtopic 3: summary description of subtopic 3\n\n" +
+    "### Topic 2\n" +
+    "- subtopic 4: summary description of subtopic 4\n" +
+    "- subtopic 5: summary description of subtopic 5\n" +
+    "- subtopic 6: summary description of subtopic 6\n\n" +
+    "### Topic 3 and more\n\n" +
+    "## Overview\n" +
+    "- conclusion of subtopic 1\n" +
+    "- conclusion of subtopic 2\n" +
+    "- conclusion of subtopic 3\n" +
+    "- conclusion of subtopic 4 ...\n\n" +
+    "## Todo List\n" +
+    "- [ ] Action item with deadline and owner\n\n" +
+    'Please generate a meeting summary to be comprehensive. including "About Meeting" with time, location and attendees, ' +
+    '"meeting outline" with the key points, for each subtopic, please describe detailed discussion content. ' +
+    "Please group related subtopics into one topic, and give a name for the topic.\n\n" +
+    "Please make sure you list all action items one by one, if there is clear deadline, assigned person and deliverables, please list together.\n\n" +
+    "Present this as a professional meeting summary assistant, akin to the work of a personal secretary.\n\n" +
+    "Summarize in a professional, concise, and clear manner, avoiding complex terminology to ensure all team members, " +
+    "regardless of their level of expertise, can understand the content.\n\n" +
+    "This meeting summary is intended for all team members, including those who attended and those who did not, " +
+    "serving as a reference for their review and work.\n\n" +
+    "Please output in Markdown format, using appropriate font sizes and formatting symbols (##, ###, -).";
+const SPEAKER_ADDENDUM = "\n\nThe transcript has speaker labels like [Speaker 0], [Speaker 1]. " +
+    "Identify real names from context (introductions, addressing by name). " +
+    "At the very end of your output, add a line:\n" +
+    "SPEAKER_MAP: Speaker 0=Name1, Speaker 1=Name2, ...";
 async function summarizeTranscriptWithOllama(input) {
     const model = input.model ?? "qwen3.5:9b";
     const host = input.ollamaHost ?? "http://localhost:11434";
     const transcript = input.transcript.trim();
     const clippedTranscript = transcript.slice(0, 30000);
     const prompt = input.hasSpeakerLabels
-        ? "You are a meeting assistant. The transcript has speaker labels like [Speaker 0], [Speaker 1].\n\n" +
-            "1. Identify real names from context (introductions, addressing by name).\n" +
-            "2. Map [Speaker N] to real names where possible.\n" +
-            "3. Return exactly these keys on separate lines:\n\n" +
-            "TITLE: <short title>\n" +
-            "ATTENDEE: <comma separated real names, or Speaker N if unidentified>\n" +
-            "SPEAKER_MAP: <Speaker 0=Name1, Speaker 1=Name2, ...>\n" +
-            "BRIEF: <max 14 words>\n" +
-            "SUMMARY: <2-4 concise sentences>\n\n" +
-            "Keep BRIEF <= 14 words. /no_think"
-        : "You are a meeting assistant. Return exactly these keys on separate lines:\n" +
-            "TITLE: <short title>\n" +
-            "ATTENDEE: <comma separated attendee names or Unknown>\n" +
-            "BRIEF: <max 14 words>\n" +
-            "SUMMARY: <2-4 concise sentences>\n\n" +
-            "Keep BRIEF <= 14 words. /no_think";
+        ? MEETING_SUMMARY_PROMPT + SPEAKER_ADDENDUM
+        : MEETING_SUMMARY_PROMPT;
     try {
         const rawContent = await streamOllamaChat(host, {
             model,
@@ -185,16 +208,14 @@ async function summarizeTranscriptWithOllama(input) {
                 },
             ],
         });
-        const content = stripThinkTags(rawContent);
-        const parsed = parseSummaryBlock(content);
+        const content = sanitizeLlmOutput(rawContent);
+        const parsed = parseMeetingSummaryMarkdown(content);
         const speakerMap = input.hasSpeakerLabels ? parseSpeakerMap(content) : undefined;
         return {
             title: parsed.title || fallbackTitleFromTranscript(transcript),
             attendee: parsed.attendee || "Unknown",
             brief: truncateWords(parsed.brief || transcript || "No content", 14),
-            summary: parsed.summary ||
-                fallbackSummaryFromTranscript(transcript) ||
-                "No summary available.",
+            summary: parsed.summary || fallbackSummaryFromTranscript(transcript) || "No summary available.",
             ...(speakerMap && speakerMap.size > 0 ? { speakerMap } : {}),
         };
     }
@@ -206,6 +227,34 @@ async function summarizeTranscriptWithOllama(input) {
             summary: fallbackSummaryFromTranscript(transcript) || "No summary available.",
         };
     }
+}
+/**
+ * Parse the markdown meeting summary output.
+ * Extracts attendee, title (from first topic), brief (from overview), and full markdown as summary.
+ */
+function parseMeetingSummaryMarkdown(content) {
+    // Extract attendee from "Attendee: ..." line
+    const attendeeMatch = /Attendee:\s*(.+)/im.exec(content);
+    const attendee = attendeeMatch
+        ? (attendeeMatch[1] ?? "").replace(/\[|\]/g, "").trim()
+        : "";
+    // Extract title from first ### heading (first topic)
+    const topicMatch = /^###\s+(.+)/m.exec(content);
+    const title = topicMatch ? (topicMatch[1] ?? "").trim() : "";
+    // Extract brief from first bullet in Overview section
+    const overviewMatch = /## (?:📋\s*)?Overview\n([\s\S]*?)(?=\n## |\n#\s|$)/i.exec(content);
+    let brief = "";
+    if (overviewMatch) {
+        const firstBullet = /^-\s+(.+)/m.exec(overviewMatch[1] ?? "");
+        brief = firstBullet ? (firstBullet[1] ?? "").trim() : "";
+    }
+    // Strip SPEAKER_MAP line from summary (it's metadata, not content)
+    const summary = content.replace(/^SPEAKER_MAP:.*$/gm, "").trim();
+    // Fallback: try old structured format if markdown parsing found nothing
+    if (!attendee && !title) {
+        return parseSummaryBlock(content);
+    }
+    return { title, attendee, brief, summary };
 }
 async function streamOllamaChat(host, body) {
     const response = await fetch(`${host}/api/chat`, {
@@ -241,6 +290,14 @@ async function streamOllamaChat(host, body) {
 }
 export function stripThinkTags(text) {
     return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+/** Strip LLM artifacts: think tags, special tokens, trailing token fragments. */
+export function sanitizeLlmOutput(text) {
+    return stripThinkTags(text)
+        .replace(/<\|[^|]*\|>/g, "") // Qwen/ChatML tokens like <|endoftext|>, <|im_start|>
+        .replace(/\|>[\s\S]*$/g, "") // Truncate from stray |> onwards
+        .replace(/(?:^|\n)\s*(?:user|assistant|system)\s*$/gm, "") // Trailing role labels
+        .trim();
 }
 function parseSummaryBlock(content) {
     const title = extractLine(content, "TITLE");
@@ -375,10 +432,7 @@ export async function resolveSpeakerNames(input) {
                 { role: "user", content: clipped },
             ],
         });
-        const content = stripThinkTags(rawContent)
-            .replace(/<\|[^|]*\|>/g, "")
-            .replace(/\|>.*$/s, "")
-            .trim();
+        const content = sanitizeLlmOutput(rawContent);
         const jsonMap = parseSpeakerMapJson(content);
         if (jsonMap.size > 0)
             return jsonMap;

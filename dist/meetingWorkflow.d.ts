@@ -34,6 +34,8 @@ export declare class HiDockMeetingWorkflow {
 export declare function isWhisperRecording(fileName: string): boolean;
 export declare function parseHiDockRecordingDate(fileName: string): Date | null;
 export declare function stripThinkTags(text: string): string;
+/** Strip LLM artifacts: think tags, special tokens, trailing token fragments. */
+export declare function sanitizeLlmOutput(text: string): string;
 /**
  * Parse a SPEAKER_MAP line from LLM output.
  * Expected format: "SPEAKER_MAP: Speaker 0=Alice, Speaker 1=Bob"

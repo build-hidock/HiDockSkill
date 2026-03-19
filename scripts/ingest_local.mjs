@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 
 import { parseMoonshineOutput, formatSpeakerTranscript } from "../dist/transcribe.js";
 import {
-  stripThinkTags,
+  sanitizeLlmOutput,
   parseSpeakerMap,
   parseSpeakerMapJson,
   applySpeakerNames,
@@ -115,23 +115,24 @@ async function main() {
   const host = process.env.OLLAMA_HOST ?? "http://localhost:11434";
   const model = process.env.OLLAMA_MODEL ?? "qwen3.5:9b";
 
+  const MEETING_SUMMARY_PROMPT =
+    "You are a professional meeting summarizing assistant.\n\n" +
+    'Please use this format, but don\'t use "topic 1", "subtopic 1", "summary", use the summarization content instead.\n\n' +
+    "## About Meeting\nDate & Time: [insert meeting date and time]\nLocation: [insert location]\nAttendee: [insert names]\n\n" +
+    "## Meeting Outline\n### Topic 1\n- subtopic 1: summary description\n- subtopic 2: summary description\n\n" +
+    "### Topic 2\n- subtopic 3: summary description\n\n### Topic 3 and more\n\n" +
+    "## Overview\n- conclusion of subtopic 1\n- conclusion of subtopic 2\n\n" +
+    "## Todo List\n- [ ] Action item with deadline and owner\n\n" +
+    "Please generate a comprehensive meeting summary including About Meeting, Meeting Outline with detailed subtopics, Overview with conclusions, and Todo List with action items.\n" +
+    "Group related subtopics into named topics. Output in Markdown format.";
+
+  const SPEAKER_ADDENDUM =
+    "\n\nThe transcript has speaker labels like [Speaker 0], [Speaker 1]. " +
+    "Identify real names from context. At the very end, add: SPEAKER_MAP: Speaker 0=Name1, Speaker 1=Name2, ...";
+
   const systemPrompt = hasSpeakers
-    ? "You are a meeting assistant. The transcript has speaker labels like [Speaker 0], [Speaker 1].\n\n" +
-      "1. Identify real names from context (introductions, addressing by name).\n" +
-      "2. Map [Speaker N] to real names where possible.\n" +
-      "3. Return exactly these keys on separate lines:\n\n" +
-      "TITLE: <short title>\n" +
-      "ATTENDEE: <comma separated real names, or Speaker N if unidentified>\n" +
-      "SPEAKER_MAP: <Speaker 0=Name1, Speaker 1=Name2, ...>\n" +
-      "BRIEF: <max 14 words>\n" +
-      "SUMMARY: <2-4 concise sentences>\n\n" +
-      "Keep BRIEF <= 14 words. /no_think"
-    : "You are a meeting assistant. Return exactly these keys on separate lines:\n" +
-      "TITLE: <short title>\n" +
-      "ATTENDEE: <comma separated attendee names or Unknown>\n" +
-      "BRIEF: <max 14 words>\n" +
-      "SUMMARY: <2-4 concise sentences>\n\n" +
-      "Keep BRIEF <= 14 words. /no_think";
+    ? MEETING_SUMMARY_PROMPT + SPEAKER_ADDENDUM
+    : MEETING_SUMMARY_PROMPT;
 
   const clipped = speakerTranscript.slice(0, 30000);
   const llmRaw = await streamOllama(host, {
@@ -142,14 +143,20 @@ async function main() {
     ],
   });
 
-  const llmContent = stripThinkTags(llmRaw);
-  console.log("     LLM output:");
-  console.log("     " + llmContent.split("\n").slice(0, 8).join("\n     "));
+  const llmContent = sanitizeLlmOutput(llmRaw);
+  console.log("     LLM output (first 10 lines):");
+  console.log("     " + llmContent.split("\n").slice(0, 10).join("\n     "));
 
-  const title = extractLine(llmContent, "TITLE") || `${baseName} Recording`;
-  const attendee = extractLine(llmContent, "ATTENDEE") || "Unknown";
-  const brief = extractLine(llmContent, "BRIEF") || speakerTranscript.slice(0, 60);
-  const summary = extractSummary(llmContent) || llmContent.slice(0, 500);
+  // Parse markdown summary format
+  const attendeeMatch = /Attendee:\s*(.+)/im.exec(llmContent);
+  const attendee = attendeeMatch ? attendeeMatch[1].replace(/\[|\]/g, "").trim() : "Unknown";
+  const topicMatch = /^###\s+(.+)/m.exec(llmContent);
+  const title = topicMatch ? topicMatch[1].trim() : `${baseName} Recording`;
+  const overviewMatch = /## (?:📋\s*)?Overview\n([\s\S]*?)(?=\n## |\n#\s|$)/i.exec(llmContent);
+  let brief = "";
+  if (overviewMatch) { const fb = /^-\s+(.+)/m.exec(overviewMatch[1] || ""); brief = fb ? fb[1].trim() : ""; }
+  brief = brief || speakerTranscript.slice(0, 60);
+  const summary = llmContent.replace(/^SPEAKER_MAP:.*$/gm, "").trim();
 
   // Try to resolve speaker names from summary output first
   let speakerMap = hasSpeakers ? parseSpeakerMap(llmContent) : new Map();

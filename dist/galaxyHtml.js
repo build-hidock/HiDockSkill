@@ -440,13 +440,22 @@ export function renderGalaxyHtml(data) {
     word-break: break-word;
   }
   .note-text.summary-text {
-    font-size: 15px;
+    font-size: 13px;
     color: var(--text-primary);
-    line-height: 1.65;
+    line-height: 1.6;
     padding: 14px 16px;
     background: rgba(168,85,247,0.06);
     border-radius: 10px;
     border: 1px solid rgba(168,85,247,0.08);
+    max-height: calc(92vh - 180px);
+    overflow-y: auto;
+    white-space: normal;
+  }
+  .note-text.summary-text::-webkit-scrollbar { width: 4px; }
+  .note-text.summary-text::-webkit-scrollbar-track { background: transparent; }
+  .note-text.summary-text::-webkit-scrollbar-thumb {
+    background: rgba(168,85,247,0.2);
+    border-radius: 2px;
   }
   .note-text.transcript-text {
     flex: 1;
@@ -1495,6 +1504,28 @@ export function renderGalaxyHtml(data) {
       return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
+    function renderMarkdown(md) {
+      if (!md) return "";
+      return md.split("\\n").map(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) return "";
+        // Headings
+        if (/^### /.test(trimmed)) return '<h4 style="margin:14px 0 6px;font-size:14px;color:var(--text-primary);">' + escapeHtml(trimmed.slice(4)) + '</h4>';
+        if (/^## /.test(trimmed)) return '<h3 style="margin:18px 0 8px;font-size:15px;color:#c084fc;">' + escapeHtml(trimmed.slice(3)) + '</h3>';
+        // Checkbox items
+        if (/^- \\[[ x]\\] /.test(trimmed)) {
+          var checked = /^- \\[x\\] /i.test(trimmed);
+          var text = trimmed.replace(/^- \\[[ x]\\] /i, "");
+          return '<div style="margin:3px 0;padding-left:8px;">' + (checked ? "&#x2611; " : "&#x2610; ") + escapeHtml(text) + '</div>';
+        }
+        // Bullet items
+        if (/^- /.test(trimmed)) return '<div style="margin:3px 0;padding-left:8px;">&#x2022; ' + escapeHtml(trimmed.slice(2)) + '</div>';
+        // Bold
+        var html = escapeHtml(trimmed).replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
+        return '<div style="margin:4px 0;">' + html + '</div>';
+      }).join("");
+    }
+
     function fmtTime(sec) {
       var m = Math.floor(sec / 60);
       var s = Math.floor(sec % 60);
@@ -1642,7 +1673,7 @@ export function renderGalaxyHtml(data) {
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(note) {
           if (note) {
-            summaryEl.textContent = note.summary || "(no summary)";
+            summaryEl.innerHTML = renderMarkdown(note.summary || "(no summary)");
             transcriptEl.innerHTML = formatTranscriptHtml(note.transcript || "(no transcript)");
             setupAudioSync();
           } else {
