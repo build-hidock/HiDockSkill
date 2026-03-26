@@ -187,7 +187,7 @@ HiDock filenames encode the recording type (e.g., `2026Feb21-132825-Rec00.hda`):
 
 HiDockSkill requires a [HiDock](https://www.hidock.com/) USB meeting recorder. The **HiDock H1E** is an 8-in-1 USB-C docking station with built-in AI voice recorder — meeting notes, 4K display, 65W charging, gigabit ethernet, all in one device.
 
-**$229. Free transcription. Forever.**
+**Free transcription. Forever.**
 
 [Get HiDock H1E](https://openclaw.hidock.com) | [Learn more](https://www.hidock.com/)
 
