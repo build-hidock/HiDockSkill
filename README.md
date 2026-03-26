@@ -179,11 +179,9 @@ HiDock filenames encode the recording type (e.g., `2026Feb21-132825-Rec00.hda`):
 
 | Type | Pattern | Color |
 |------|---------|-------|
-| Meeting | `Rec` | Blue |
-| WIP | `Wip` | Green |
-| Room | `Room` | Amber |
-| Call | `Call` | Red |
-| Whisper | `Whsp` | Purple |
+| Room | `Room` | Orange |
+| Call | `Call` | Green |
+| Whisper | `Whsp` | Blue |
 
 ## Get HiDock
 
