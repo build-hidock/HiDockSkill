@@ -1,24 +1,38 @@
 # HiDockSkill
 
-Automated meeting transcription, summarization, and visualization pipeline for [HiDock P1](https://www.hidock.com/) USB meeting recorder.
+**100% local** meeting transcription, summarization, and visualization for [HiDock](https://www.hidock.com/) USB meeting recorders. No cloud. No API keys. No subscriptions.
 
-## What It Does
+> Your meetings stay on your machine. Always.
 
-1. Connects to HiDock P1 via USB
-2. Downloads recordings from the device
-3. Transcribes audio with OpenAI Whisper
-4. Summarizes with GPT-4o-mini
-5. Saves Markdown notes with audio files to tiered storage
-6. Visualizes your meeting history as an interactive galaxy dashboard
+## How It Works
+
+```
+ HiDock H1E/P1          Moonshine             Ollama             Galaxy Dashboard
+ ┌──────────┐      ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
+ │  USB      │─────>│  Local ASR   │────>│  Local LLM   │────>│  D3.js force     │
+ │  Record   │      │  + Speaker   │     │  Summary +   │     │  graph of all    │
+ │           │      │  Diarization │     │  Action Items │     │  your meetings   │
+ └──────────┘      └──────────────┘     └──────────────┘     └──────────────────┘
+     .hda files       Transcription        Structured MD         Interactive UI
+```
+
+1. **Plug in** your HiDock H1E or P1 via USB — auto-detected
+2. **Transcribe** with [Moonshine](https://github.com/usefulmachines/moonshine) — local speech-to-text with speaker diarization
+3. **Summarize** with [Ollama](https://ollama.com/) — local LLM extracts title, attendees, topics, action items
+4. **Resolve speakers** — heuristic + LLM-based name detection with hallucination filtering
+5. **Save** structured Markdown notes with audio files to tiered storage (hot/warm/cold)
+6. **Visualize** in the Galaxy Dashboard — an interactive constellation of your meeting history
 
 ## Galaxy Dashboard
 
 A D3.js force-directed graph that maps all your meeting notes as an interactive constellation.
 
+![Galaxy Dashboard](assets/galaxy-dashboard.png)
+
 - **Galaxy view** — force-directed graph with memcard nodes, orbital rings by tier (hot/warm/cold), color-coded source type dots, and relationship edges
 - **List view** — searchable, sortable table of all notes
 - **Tab switcher** — floating tabs at top center to switch between views
-- **Note popup** — click any card or row to open an elegant modal with summary, transcript, and audio player
+- **Note popup** — click any card or row to open a modal with summary, transcript, and audio player with click-to-seek sync
 - **AI insights sidebar** — hot topics cloud, action items, reminders, achievements extracted from recent notes
 - **Syncing overlay** — pulsing animation while device is syncing, auto-transitions to galaxy when ready
 
@@ -32,7 +46,20 @@ Or visit http://127.0.0.1:18180 when the USB watcher is running.
 
 ## Quick Start
 
-### 1. Install
+### 1. Prerequisites
+
+- **Node.js** 20+
+- **ffmpeg** — audio format conversion
+- **Python 3** with [moonshine_voice](https://github.com/usefulmachines/moonshine) — local transcription
+- **Ollama** with a model pulled (default: `qwen3.5:9b`)
+
+```bash
+# Install Ollama and pull the default model
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen3.5:9b
+```
+
+### 2. Install
 
 ```bash
 git clone https://github.com/build-hidock/HiDockSkill.git
@@ -40,13 +67,7 @@ cd HiDockSkill
 npm install
 ```
 
-### 2. Configure
-
-```bash
-echo "OPENAI_API_KEY=sk-..." > .env
-```
-
-### 3. Connect HiDock P1 via USB
+### 3. Connect HiDock via USB
 
 > **USB exclusivity:** HiDock can only be owned by one app at a time. Close HiNotes web/browser before using HiDockSkill.
 
@@ -63,6 +84,20 @@ Auto-syncs when you plug in, opens galaxy dashboard, sends macOS notifications:
 ```bash
 npm run usb:watch
 ```
+
+## AI Agent Integration
+
+HiDockSkill works as a skill for **OpenClaw** and **Claude Code**:
+
+```bash
+# OpenClaw
+ln -s /path/to/HiDockSkill ~/.openclaw/skills/hidock-skill
+
+# Claude Code
+git clone https://github.com/build-hidock/HiDockSkill-Claude ~/.claude/skills/hidock-skill
+```
+
+Then just say **"HiDock"** to open the galaxy dashboard, or **"sync HiDock"** to sync recordings. The USB watcher forwards notifications to Slack via OpenClaw CLI.
 
 ## CLI Commands
 
@@ -87,7 +122,7 @@ npm run meetings:sync -- [flags]
 | `--limit N` | Process only newest N files |
 | `--whisper-only` | Only whisper memo recordings |
 | `--meetings-only` | Only meeting recordings |
-| `--language CODE` | Whisper language hint (e.g., `en`, `zh`) |
+| `--language CODE` | Language hint (e.g., `en`, `zh`) |
 | `--storage <dir>` | Override storage directory |
 | `--state-file <path>` | Override sync state file |
 
@@ -124,34 +159,19 @@ Notes are organized by age into tiered storage:
     coldmem/                   # Archived memos
 ```
 
-Each note is a Markdown file with Summary and Transcript sections. Audio files (`.mp3` or `.wav`) are saved alongside each note for in-browser playback.
+Each note is a Markdown file with YAML front matter, summary, and transcript sections. Audio files (`.mp3` or `.wav`) are saved alongside each note for in-browser playback via the Galaxy Dashboard.
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | **Required.** OpenAI API key | — |
 | `MEETING_STORAGE_DIR` | Notes storage root | (compiled-in) |
-| `WHISPER_MODEL` | Whisper model ID | `whisper-1` |
-| `SUMMARY_MODEL` | Summary model ID | `gpt-4o-mini` |
-| `WHISPER_LANGUAGE` | Language hint | (auto-detect) |
+| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | LLM model for summarization | `qwen3.5:9b` |
+| `WHISPER_LANGUAGE` | Language hint for Moonshine | (auto-detect) |
 | `HIDOCK_NOTES_BACKEND` | `local` or `memdock` | `local` |
 | `HIDOCK_NOTES_TIER_HOT_MAX_DAYS` | Hot tier max age | `30` |
 | `HIDOCK_NOTES_TIER_WARM_MAX_DAYS` | Warm tier max age | `180` |
-
-## AI Agent Integration
-
-HiDockSkill works with both **Claude Code** and **OpenClaw** via the companion skill repo:
-
-```bash
-# Claude Code
-git clone https://github.com/build-hidock/HiDockSkill-Claude ~/.claude/skills/hidock-skill
-
-# OpenClaw
-ln -s /path/to/HiDockSkill-Claude ~/.openclaw/skills/hidock-skill
-```
-
-Then just say "HiDock" to open the galaxy dashboard, or "sync HiDock" to sync recordings.
 
 ## Source Types
 
@@ -165,6 +185,14 @@ HiDock filenames encode the recording type (e.g., `2026Feb21-132825-Rec00.hda`):
 | Call | `Call` | Red |
 | Whisper | `Whsp` | Purple |
 
+## Get HiDock
+
+HiDockSkill requires a [HiDock](https://www.hidock.com/) USB meeting recorder. The **HiDock H1E** is an 8-in-1 USB-C docking station with built-in AI voice recorder — meeting notes, 4K display, 65W charging, gigabit ethernet, all in one device.
+
+**$229. Free transcription. Forever.**
+
+[Get HiDock H1E](https://openclaw.hidock.com) | [Learn more](https://www.hidock.com/)
+
 ## Troubleshooting
 
 ### `LIBUSB_ERROR_ACCESS`
@@ -174,13 +202,18 @@ pkill -f "usb:watch"
 pkill -f "meetings:sync"
 ```
 
-### `OPENAI_API_KEY is required`
+### Ollama connection refused
+Make sure Ollama is running:
 ```bash
-echo "OPENAI_API_KEY=sk-..." > .env
+ollama serve
 ```
 
 ### Device not found
-Ensure HiDock P1 is connected via USB. On macOS, check System Information > USB.
+Ensure HiDock is connected via USB. On macOS, check System Information > USB.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on bug reports, feature requests, and pull requests.
 
 ## License
 

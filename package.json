@@ -1,7 +1,7 @@
 {
   "name": "hidockskill",
   "version": "1.0.0",
-  "description": "HiDock WebUSB file parser and Whisper transcription skill",
+  "description": "100% local meeting transcription, summarization, and visualization for HiDock USB recorders (Moonshine ASR + Ollama LLM)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
