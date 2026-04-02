@@ -3,7 +3,8 @@ import { platform } from "node:os";
 import { WebUSB } from "usb";
 import { HiDockClient } from "./client.js";
 const DEFAULT_NODE_FILTERS = [
-    { vendorId: 0x10d6, productId: 0xb00d },
+    { vendorId: 0x10d6, productId: 0xb00c }, // HiDock H1 data interface
+    { vendorId: 0x10d6, productId: 0xb00d }, // HiDock P1
     { vendorId: 0x10d6 }, // fallback for future product IDs
 ];
 const DEFAULT_MONITOR_INTERVAL_MS = 5000;
@@ -17,12 +18,19 @@ export async function findHiDockNodeDevice(options = {}) {
     const filters = options.filters ?? DEFAULT_NODE_FILTERS;
     const webusb = createNodeWebUsb();
     const devices = await webusb.getDevices();
-    const matched = devices.find((device) => filters.some((filter) => {
-        const productMatches = typeof filter.productId === "number"
-            ? device.productId === filter.productId
-            : true;
-        return device.vendorId === filter.vendorId && productMatches;
-    }));
+    // Iterate filters first (priority order), then devices.
+    // This ensures higher-priority filters (e.g. H1) match before fallbacks.
+    let matched;
+    for (const filter of filters) {
+        matched = devices.find((device) => {
+            const productMatches = typeof filter.productId === "number"
+                ? device.productId === filter.productId
+                : true;
+            return device.vendorId === filter.vendorId && productMatches;
+        });
+        if (matched)
+            break;
+    }
     if (matched) {
         return matched;
     }

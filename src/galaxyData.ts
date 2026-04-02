@@ -549,6 +549,28 @@ async function buildInsights(nodes: GalaxyNode[]): Promise<GalaxyInsights> {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+async function detectRecentSources(storageDir: string, maxAgeMs: number): Promise<Set<string>> {
+  const sources = new Set<string>();
+  const cutoff = Date.now() - maxAgeMs;
+  for (const indexName of ["meetingindex.md", "whisperindex.md"]) {
+    const lines = await readIndexLines(path.join(storageDir, indexName));
+    for (const line of lines) {
+      const entry = parseIndexLine(line);
+      if (!entry) continue;
+      const noteFullPath = path.join(storageDir, entry.notePath);
+      try {
+        const stat = await fs.stat(noteFullPath);
+        if (stat.mtimeMs >= cutoff) {
+          sources.add(entry.source);
+        }
+      } catch {
+        // file may not exist
+      }
+    }
+  }
+  return sources;
+}
+
 async function readIndexLines(indexPath: string): Promise<string[]> {
   try {
     const content = await fs.readFile(indexPath, "utf8");
@@ -563,7 +585,13 @@ export async function buildGalaxyData(options: {
   newlySyncedSources?: string[];
 }): Promise<GalaxyGraphData> {
   const { storageDir, newlySyncedSources } = options;
-  const newSourceSet = new Set(newlySyncedSources ?? []);
+  // If no explicit newlySyncedSources, mark notes from the last 24h as new
+  let newSourceSet: Set<string>;
+  if (newlySyncedSources && newlySyncedSources.length > 0) {
+    newSourceSet = new Set(newlySyncedSources);
+  } else {
+    newSourceSet = await detectRecentSources(storageDir, 24 * 60 * 60 * 1000);
+  }
 
   const meetingIndexPath = path.join(storageDir, "meetingindex.md");
   const whisperIndexPath = path.join(storageDir, "whisperindex.md");

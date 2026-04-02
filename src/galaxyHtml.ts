@@ -28,7 +28,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     --color-hot: #a855f7;
     --color-warm: #7c3aed;
     --color-cold: #4338ca;
-    --color-new: #FFFFFF;
+    --color-new: #ff4444;
     --src-rec: #22c55e;
     --src-wip: #3b82f6;
     --src-room: #f59e0b;
@@ -91,7 +91,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   .stat-hot { color: var(--color-hot); }
   .stat-warm { color: var(--color-warm); }
   .stat-cold { color: var(--color-cold); }
-  .stat-new { color: var(--color-new); text-shadow: 0 0 6px rgba(168,85,247,0.6); }
+  .stat-new { color: var(--color-new); text-shadow: 0 0 6px rgba(255,68,68,0.6); }
 
   /* ---------- syncing overlay ---------- */
   #syncing-overlay {
@@ -956,7 +956,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   <div class="legend-item"><span class="legend-card" style="background:rgba(168,85,247,0.15); border:1px solid var(--color-hot);"></span> Hot (recent)</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(124,58,237,0.15); border:1px solid var(--color-warm);"></span> Warm</div>
   <div class="legend-item"><span class="legend-card" style="background:rgba(67,56,202,0.15); border:1px solid var(--color-cold);"></span> Cold (old)</div>
-  <div class="legend-item"><span class="legend-card" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(168,85,247,0.4);"></span> New note</div>
+  <div class="legend-item"><span class="legend-card" style="background:rgba(255,68,68,0.15); border:1px solid var(--color-new); box-shadow:0 0 6px rgba(255,68,68,0.4);"></span> New note</div>
   <h3 style="margin-top:10px;">Source</h3>
   <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-rec);"></span> Call</div>
   <div class="legend-item"><span class="legend-card" style="width:8px;height:8px;border-radius:50%;background:var(--src-whsp);"></span> Whisper</div>
@@ -1284,7 +1284,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     var CARD_W = 72;
     var CARD_H = 44;
     var CARD_R = 10;
-    var CARD_NEW_GROW = 22;
+    var CARD_NEW_GROW = 33;
     var TIER_CONFIG = {
       hotmem:  { color: "#a855f7", bg: "rgba(168,85,247,0.12)",  orbitalRadius: 200  },
       warmmem: { color: "#7c3aed", bg: "rgba(124,58,237,0.12)",  orbitalRadius: 380  },
@@ -1296,7 +1296,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       attendee: "#22c55e",
       sameDay:  "rgba(168,85,247,0.12)",
     };
-    var NEW_COLOR = "#FFFFFF";
+    var NEW_COLOR = "#ff4444";
     var SOURCE_TYPE_COLORS = {
       rec:  "#22c55e",
       wip:  "#3b82f6",
@@ -1425,7 +1425,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       var w = CARD_W + grow;
       var h = CARD_H + grow;
       var borderColor = d.isNew ? NEW_COLOR : cfg.color;
-      var bgColor = d.isNew ? "rgba(168,85,247,0.2)" : cfg.bg;
+      var bgColor = d.isNew ? "rgba(255,68,68,0.25)" : cfg.bg;
 
       g.append("rect")
         .attr("width", w).attr("height", h)

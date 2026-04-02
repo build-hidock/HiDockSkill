@@ -74,14 +74,25 @@ export async function transcribeAudio(
       wavPath,
     ]);
 
+    const scriptName = process.env.ASR_BACKEND === "moonshine"
+      ? "moonshine_transcribe.py"
+      : "dicow_transcribe.py";
     const scriptPath = path.resolve(
       path.dirname(new URL(import.meta.url).pathname),
       "..",
       "scripts",
-      "moonshine_transcribe.py",
+      scriptName,
     );
 
-    const pythonBin = input.pythonBin ?? "python3";
+    const venvPython = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "..",
+      ".venv",
+      "bin",
+      "python3",
+    );
+    const pythonBin = input.pythonBin
+      ?? (await fs.access(venvPython).then(() => venvPython, () => "python3"));
     const args = [scriptPath, wavPath];
     if (input.language) {
       args.push(input.language);
@@ -93,7 +104,7 @@ export async function transcribeAudio(
 
     return {
       text: parsed.text,
-      model: "moonshine",
+      model: scriptName === "moonshine_transcribe.py" ? "moonshine" : "dicow",
       uploadFileName,
       mimeType: format.mimeType,
       detectedFormat: format.detectedFormat,
