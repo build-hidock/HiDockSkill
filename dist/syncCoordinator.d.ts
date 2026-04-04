@@ -9,6 +9,7 @@ export declare class SyncCoordinator {
     private readonly debounceMs;
     private readonly log;
     constructor(options?: SyncCoordinatorOptions);
+    isBusy(): boolean;
     trigger(run: () => Promise<void>): void;
     private execute;
 }

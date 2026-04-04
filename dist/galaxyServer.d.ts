@@ -3,6 +3,7 @@ import type { GalaxyGraphData } from "./galaxyData.js";
 export interface SyncProgressItem {
     fileName: string;
     status: "pending" | "downloading" | "transcribing" | "summarizing" | "saved" | "skipped" | "failed";
+    progressPercent: number;
     error?: string;
 }
 export interface SyncProgress {
@@ -22,6 +23,8 @@ export interface GalaxyServerHandle {
     url: string;
     close: () => Promise<void>;
     updateData: (data: GalaxyGraphData) => void;
+    clearData: () => void;
+    resetProgress: () => void;
     updateProgress: (progress: SyncProgress) => void;
 }
 export declare function startGalaxyServer(options: GalaxyServerOptions): Promise<GalaxyServerHandle>;

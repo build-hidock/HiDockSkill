@@ -36,6 +36,7 @@ export interface SyncProgressEvent {
     current: number;
     fileName: string;
     status: SyncFileStatus;
+    progressPercent: number;
     error?: string;
 }
 interface RunMeetingsSyncOptions {

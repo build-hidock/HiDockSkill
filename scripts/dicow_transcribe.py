@@ -6,18 +6,17 @@ Pipeline:
   1. Silero VAD — speech activity detection
   2. SpeechBrain ECAPA-TDNN — speaker embeddings (fully local, no token)
   3. Spectral clustering — assign speaker IDs
-  4. faster-whisper large-v3-turbo — ASR with VAD (CPU int8)
+  4. ASR — mlx-whisper (Apple Metal, default) or faster-whisper (CPU int8 fallback)
   5. Time-overlap alignment — assign speaker IDs to ASR segments
-
-Upgrade path: Replace with DiariZen (13.9% DER) or pyannote 4.0
-when HF_TOKEN is available.
 
 Usage: dicow_transcribe.py <wav_path> [language]
 Output: JSON compatible with HiDockSkill transcribe.ts interface.
 
 Environment:
   DIARIZER        — "local" (default), "pyannote", or "diarizen"
-  WHISPER_MODEL   — faster-whisper model ID (default: "large-v3-turbo")
+  ASR_ENGINE      — "mlx" (default, Apple Metal GPU) or "faster-whisper" (CPU int8)
+  WHISPER_MODEL   — model ID (default: "mlx-community/whisper-large-v3-turbo" for mlx,
+                    "large-v3-turbo" for faster-whisper)
   HF_TOKEN        — HuggingFace token (only needed for pyannote/diarizen)
 """
 
@@ -47,19 +46,13 @@ def main() -> None:
     except Exception as e:
         sys.stderr.write(f"  Diarization skipped: {e}\n")
 
-    # Step 2: ASR — transcribe each diarization segment individually for accuracy
+    # Step 2: ASR — whole-file transcription, then align to speaker segments
     sys.stderr.write("Transcribing...\n")
-    if diar_segments:
-        asr_segments = transcribe_by_segments(wav_path, diar_segments, language)
-    else:
-        asr_segments = transcribe_whisper(wav_path, language)
+    asr_segments = transcribe_whisper(wav_path, language)
     sys.stderr.write(f"  {len(asr_segments)} ASR segments\n")
 
-    # Step 3: Build aligned output (segments already have speaker IDs if diarized)
-    if diar_segments:
-        aligned = build_output(asr_segments)
-    else:
-        aligned = align(asr_segments, diar_segments)
+    # Step 3: Align ASR segments to speaker diarization
+    aligned = align(asr_segments, diar_segments)
 
     # Output JSON to stdout
     print(json.dumps(aligned, ensure_ascii=False))
@@ -202,7 +195,7 @@ def _cluster_embeddings(embeddings: "np.ndarray", max_speakers: int = 8) -> "np.
     # Try different numbers of clusters, pick best silhouette score
     best_labels = np.zeros(n, dtype=int)
     best_score = -1.0
-    max_k = min(max_speakers, n)
+    max_k = min(max_speakers, n - 1)  # silhouette_score requires k < n
 
     for k in range(2, max_k + 1):
         clustering = AgglomerativeClustering(
@@ -274,95 +267,52 @@ def _diarize_diarizen(wav_path: str) -> list[tuple[float, float, int]]:
 # ASR
 # ---------------------------------------------------------------------------
 
-def transcribe_by_segments(
-    wav_path: str,
-    diar_segments: list[tuple[float, float, int]],
-    language: str | None = None,
-) -> list[dict]:
-    """Transcribe each diarization segment individually. Returns pre-labeled segments."""
-    import numpy as np
-    import torch
-    import torchaudio
-    from faster_whisper import WhisperModel
-    import tempfile
-
-    model_id = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
-    model = WhisperModel(model_id, device="cpu", compute_type="int8")
-
-    waveform, sr = torchaudio.load(wav_path)
-    if sr != 16000:
-        waveform = torchaudio.functional.resample(waveform, sr, 16000)
-        sr = 16000
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    audio = waveform.squeeze(0).numpy()
-
-    # Merge adjacent same-speaker segments for fewer Whisper calls
-    merged = _merge_speaker_segments(diar_segments, gap_threshold=1.0)
-
-    results = []
-    for start, end, speaker_id in merged:
-        start_sample = int(start * sr)
-        end_sample = int(end * sr)
-        chunk = audio[start_sample:end_sample]
-
-        if len(chunk) < sr * 0.3:
-            continue
-
-        # Write chunk to temp file for faster-whisper
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp_path = tmp.name
-        import soundfile as sf
-        sf.write(tmp_path, chunk, sr)
-
-        try:
-            kwargs: dict = {"vad_filter": False, "word_timestamps": False}
-            if language:
-                kwargs["language"] = language
-            segs, _ = model.transcribe(tmp_path, **kwargs)
-            texts = []
-            for seg in segs:
-                t = seg.text.strip()
-                if t:
-                    texts.append(t)
-            text = " ".join(texts)
-            if text:
-                results.append({
-                    "text": text,
-                    "speaker_index": speaker_id,
-                    "has_speaker_id": True,
-                    "start_time": start,
-                    "duration": round(end - start, 3),
-                })
-        finally:
-            os.unlink(tmp_path)
-
-    return results
-
-
-def _merge_speaker_segments(
-    segments: list[tuple[float, float, int]], gap_threshold: float = 1.0
-) -> list[tuple[float, float, int]]:
-    """Merge adjacent segments from the same speaker."""
-    if not segments:
-        return segments
-    merged = [segments[0]]
-    for start, end, spk in segments[1:]:
-        prev_start, prev_end, prev_spk = merged[-1]
-        if spk == prev_spk and start - prev_end < gap_threshold:
-            merged[-1] = (prev_start, end, spk)
-        else:
-            merged.append((start, end, spk))
-    return merged
-
 
 def transcribe_whisper(
     wav_path: str, language: str | None = None
 ) -> list[dict]:
-    """Run faster-whisper with VAD (fallback when no diarization). Returns [{text, start, end}, ...]."""
+    """Transcribe whole file. Returns [{text, start, end}, ...].
+
+    Uses mlx-whisper (Apple Metal) by default, falls back to faster-whisper (CPU)
+    when ASR_ENGINE=faster-whisper.
+    """
+    engine = os.environ.get("ASR_ENGINE", "mlx").lower()
+    if engine == "faster-whisper":
+        return _transcribe_faster_whisper(wav_path, language)
+    return _transcribe_mlx_whisper(wav_path, language)
+
+
+def _transcribe_mlx_whisper(
+    wav_path: str, language: str | None = None
+) -> list[dict]:
+    """Transcribe with mlx-whisper (Apple Metal GPU accelerated)."""
+    import mlx_whisper
+
+    model_id = os.environ.get("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+    sys.stderr.write(f"  engine=mlx-whisper model={model_id}\n")
+
+    kwargs: dict = {"path_or_hf_repo": model_id, "word_timestamps": True}
+    if language:
+        kwargs["language"] = language
+
+    output = mlx_whisper.transcribe(wav_path, **kwargs)
+
+    result = []
+    for seg in output.get("segments", []):
+        text = seg.get("text", "").strip()
+        if text:
+            result.append({"text": text, "start": seg["start"], "end": seg["end"]})
+    return result
+
+
+def _transcribe_faster_whisper(
+    wav_path: str, language: str | None = None
+) -> list[dict]:
+    """Transcribe with faster-whisper (CPU int8 fallback)."""
     from faster_whisper import WhisperModel
 
     model_id = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+    sys.stderr.write(f"  engine=faster-whisper model={model_id}\n")
     model = WhisperModel(model_id, device="cpu", compute_type="int8")
 
     kwargs: dict = {"vad_filter": True, "word_timestamps": False}
@@ -376,17 +326,7 @@ def transcribe_whisper(
         text = seg.text.strip()
         if text:
             result.append({"text": text, "start": seg.start, "end": seg.end})
-
     return result
-
-
-def build_output(segments: list[dict]) -> dict:
-    """Build output from pre-labeled segments (from transcribe_by_segments)."""
-    text_parts = [s["text"] for s in segments]
-    return {
-        "segments": segments,
-        "text": " ".join(text_parts),
-    }
 
 
 # ---------------------------------------------------------------------------

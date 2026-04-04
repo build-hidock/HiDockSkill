@@ -20,6 +20,7 @@ export interface HiDockConnectionMonitorOptions {
     findDevice?: (options?: NodeUsbDiscoveryOptions) => Promise<UsbDeviceLike>;
     formatPrompt?: (productName: string) => string;
     onPluggedIn?: (event: HiDockPlugInEvent) => void;
+    onUnplugged?: () => void;
     log?: (message: string) => void;
 }
 export interface HiDockConnectionMonitor {

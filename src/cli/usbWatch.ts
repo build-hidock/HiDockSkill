@@ -5,9 +5,12 @@ import { promisify } from "node:util";
 
 import {
   createHiDockConnectionMonitor,
+  createNodeHiDockClient,
+  detectHiDockPresence,
   HiDockPlugInEvent,
 } from "../nodeUsb.js";
 import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync, SyncProgressEvent } from "./meetingsSync.js";
+import { SyncStateStore, defaultSyncStatePath } from "../syncState.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
 import { buildGalaxyData } from "../galaxyData.js";
 import { startGalaxyServer, GalaxyServerHandle, SyncProgress, SyncProgressItem } from "../galaxyServer.js";
@@ -27,6 +30,7 @@ interface UsbWatchCliOptions {
 }
 
 const DEFAULT_INTERVAL_MS = 5000;
+const DEFAULT_FILE_POLL_MS = 15_000; // check for new recordings every 15s
 const DEFAULT_ACTIVE_WINDOW_MINUTES = 5;
 const DEFAULT_OPENCLAW_BIN = "openclaw";
 const DEFAULT_SYNC_DEBOUNCE_MS = 1500;
@@ -86,10 +90,11 @@ async function main(): Promise<void> {
       // Find or create item
       let item = syncProgressItems.find((i) => i.fileName === event.fileName);
       if (!item) {
-        item = { fileName: event.fileName, status: event.status };
+        item = { fileName: event.fileName, status: event.status, progressPercent: 0 };
         syncProgressItems.push(item);
       }
       item.status = event.status;
+      item.progressPercent = Math.max(item.progressPercent, event.progressPercent);
       if (event.error) item.error = event.error;
     }
 
@@ -154,17 +159,66 @@ async function main(): Promise<void> {
 
   const onPluggedIn = createUsbWatchPlugInHandler(handlerOptions);
 
+  const onUnplugged = (): void => {
+    log("HiDock device disconnected");
+    sendDesktopNotification("HiDock P1", "Device disconnected.", log);
+  };
+
   const monitor = createHiDockConnectionMonitor({
     intervalMs: options.intervalMs,
     emitOnStartupIfConnected: options.emitOnStartupIfConnected,
     onPluggedIn,
+    onUnplugged,
     log,
   });
   monitor.start();
 
+  // Periodic file-list poll: detect new recordings on an already-connected device.
+  // The USB monitor only fires on connect/disconnect transitions; this catches
+  // recordings made while the device stays plugged in.
+  let filePollTimer: NodeJS.Timeout | null = null;
+  let filePollBusy = false;
+  if (runAutoSync) {
+    const syncOptions = parseMeetingsSyncArgs([]);
+    const stateStore = new SyncStateStore(syncOptions.stateFile);
+    let lastKnownFileCount = -1;
+
+    filePollTimer = setInterval(() => {
+      if (filePollBusy) return;
+      if (syncCoordinator.isBusy()) return; // sync in progress — skip poll
+      if (!detectHiDockPresence()) return; // device not connected
+
+      filePollBusy = true;
+      (async () => {
+        try {
+          const client = await createNodeHiDockClient();
+          try {
+            const { files } = await client.withConnection(() => client.listFiles());
+            const state = await stateStore.read();
+            const newFiles = files.filter((f) => stateStore.shouldProcessFile(f, state));
+
+            if (lastKnownFileCount < 0) {
+              // First poll — just record baseline, don't trigger sync
+              lastKnownFileCount = files.length;
+            } else if (newFiles.length > 0) {
+              log(`[file-poll] ${newFiles.length} new recording(s) detected, triggering sync`);
+              lastKnownFileCount = files.length;
+              syncCoordinator.trigger(runAutoSync);
+            }
+          } finally {
+            await client.close();
+          }
+        } catch {
+          // Device busy or not ready — skip this poll
+        }
+      })().finally(() => { filePollBusy = false; });
+    }, DEFAULT_FILE_POLL_MS);
+  }
+
   const shutdown = (signal: string): void => {
     console.log(`[HiDock USB Watch] stopping (${signal})`);
     monitor.stop();
+    if (filePollTimer) clearInterval(filePollTimer);
     process.exit(0);
   };
 
@@ -519,9 +573,10 @@ let galaxyServerHandle: GalaxyServerHandle | null = null;
 async function openGalaxySyncing(log: (message: string) => void): Promise<void> {
   const galaxyUrl = `http://127.0.0.1:${DEFAULT_GALAXY_PORT}`;
 
-  // If server is already running in this process, just open the browser — don't restart
+  // Clear any previous data so the browser shows the syncing overlay.
   if (galaxyServerHandle) {
-    log(`[galaxy] server already running, opening browser`);
+    galaxyServerHandle.clearData();
+    log(`[galaxy] server already running, cleared data for new sync`);
   } else {
     try {
       galaxyServerHandle = await startGalaxyServer({
@@ -543,7 +598,6 @@ async function openGalaxySyncing(log: (message: string) => void): Promise<void> 
     }
   }
 
-  // Always open the browser
   if (platform() === "darwin") {
     execFile("open", [galaxyUrl], (err) => {
       if (err) log(`[galaxy] failed to open browser: ${toErrorMessage(err)}`);

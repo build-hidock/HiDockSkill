@@ -15,6 +15,10 @@ export class SyncCoordinator {
     this.log = options.log ?? (() => undefined);
   }
 
+  isBusy(): boolean {
+    return this.running || this.timer !== null;
+  }
+
   trigger(run: () => Promise<void>): void {
     if (this.timer) {
       clearTimeout(this.timer);

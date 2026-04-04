@@ -1,5 +1,6 @@
 import { HiDockClient } from "./client.js";
 import { HiDockFileEntry } from "./fileList.js";
+import { DocumentKind } from "./meetingStorage.js";
 import { NotesStorageAdapter } from "./notesStorage.js";
 import { HiDockSkillOptions } from "./skill.js";
 export interface MeetingWorkflowOptions extends HiDockSkillOptions {
@@ -22,13 +23,32 @@ export interface ProcessedRecordingResult {
     indexPath: string;
     skipped: boolean;
 }
+export interface DownloadedRecording {
+    file: HiDockFileEntry;
+    audioBytes: Uint8Array;
+    audioCodec: "mp3" | "wav";
+    documentType: DocumentKind;
+    indexPath: string;
+    skipped: boolean;
+}
 export declare class HiDockMeetingWorkflow {
     private readonly client;
     private readonly transcribeSkill;
     private readonly storage;
     private readonly options;
     constructor(client: HiDockClient, options: MeetingWorkflowOptions);
-    processRecording(file: HiDockFileEntry, onProgress?: (receivedBytes: number, expectedBytes: number) => void): Promise<ProcessedRecordingResult>;
+    /**
+     * Download a recording from the device (USB-bound stage).
+     * Returns audio bytes ready for offline processing.
+     */
+    downloadRecording(file: HiDockFileEntry, onProgress?: (receivedBytes: number, expectedBytes: number) => void): Promise<DownloadedRecording>;
+    /**
+     * Transcribe, summarize, and save a previously downloaded recording.
+     * This stage is CPU/LLM-bound and does not touch USB.
+     */
+    processDownloadedRecording(downloaded: DownloadedRecording, onStageChange?: (stage: "transcribing" | "summarizing") => void): Promise<ProcessedRecordingResult>;
+    /** Convenience: download + process in one call (legacy sequential path). */
+    processRecording(file: HiDockFileEntry, onProgress?: (receivedBytes: number, expectedBytes: number) => void, onStageChange?: (stage: "summarizing") => void): Promise<ProcessedRecordingResult>;
     processAllRecordings(onItem?: (sourceFileName: string, index: number, total: number) => void): Promise<ProcessedRecordingResult[]>;
 }
 export declare function isWhisperRecording(fileName: string): boolean;

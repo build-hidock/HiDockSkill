@@ -4,6 +4,7 @@ import { parseHiDockFileListBody, } from "./fileList.js";
 import { parseDeviceInfoBody, parseDeviceTimeBody, parseFileCountBody, } from "./parsers.js";
 import { HiDockWebUsbTransport } from "./transport.js";
 const textEncoder = new TextEncoder();
+const DEFAULT_READ_TIMEOUT_MS = 30_000; // 30s stale-read timeout
 export class HiDockClient {
     transport;
     messageId = 0;
@@ -74,13 +75,16 @@ export class HiDockClient {
         const readLimit = options.readLimit ?? 4096;
         const messageId = this.nextMessageId();
         await this.transport.sendCommand(HiDockCommand.TRANSFER_FILE, messageId, target.rawFileNameBytes);
-        return this.collectCommandBytes(HiDockCommand.TRANSFER_FILE, messageId, expectedSize, readLimit, options.onProgress);
+        return this.collectCommandBytes(HiDockCommand.TRANSFER_FILE, messageId, expectedSize, readLimit, options.onProgress, options.readTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS);
     }
-    async collectCommandBytes(commandId, messageId, expectedSize, readLimit, onProgress) {
+    async collectCommandBytes(commandId, messageId, expectedSize, readLimit, onProgress, readTimeoutMs = DEFAULT_READ_TIMEOUT_MS) {
         const chunks = [];
         let received = 0;
         for (let reads = 0; reads < readLimit && received < expectedSize; reads += 1) {
-            const frames = await this.transport.readFrames();
+            const frames = await Promise.race([
+                this.transport.readFrames(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error(`USB read timeout after ${readTimeoutMs / 1000}s (received ${received}/${expectedSize} bytes)`)), readTimeoutMs)),
+            ]);
             for (const frame of frames) {
                 if (frame.commandId !== commandId) {
                     continue;

@@ -8,6 +8,9 @@ export class SyncCoordinator {
         this.debounceMs = options.debounceMs ?? 1000;
         this.log = options.log ?? (() => undefined);
     }
+    isBusy() {
+        return this.running || this.timer !== null;
+    }
     trigger(run) {
         if (this.timer) {
             clearTimeout(this.timer);

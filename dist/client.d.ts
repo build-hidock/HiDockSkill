@@ -5,6 +5,7 @@ import { HiDockTransportOptions, UsbDeviceLike } from "./transport.js";
 export interface DownloadFileOptions {
     expectedSize?: number;
     readLimit?: number;
+    readTimeoutMs?: number;
     onProgress?: (receivedBytes: number, expectedBytes: number) => void;
 }
 export interface HiDockTransportLike {

@@ -4,6 +4,16 @@ import { createNodeHiDockClient } from "../nodeUsb.js";
 import { HiDockMeetingWorkflow, isWhisperRecording, parseHiDockRecordingDate, } from "../meetingWorkflow.js";
 import { defaultSyncStatePath, SyncStateStore } from "../syncState.js";
 import { createNotesStorageAdapter, parseNotesStorageBackend, } from "../notesStorage.js";
+const WEIGHT_DOWNLOAD = 15;
+const WEIGHT_TRANSCRIBE = 70;
+const WEIGHT_SUMMARIZE = 15;
+const PER_FILE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes per file (supports 2h+ recordings)
+function withTimeout(promise, ms, label) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`Timeout after ${ms / 1000}s: ${label}`)), ms);
+        promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+    });
+}
 export async function runMeetingsSync(input) {
     const logger = input.logger ?? console;
     const { options } = input;
@@ -37,6 +47,10 @@ export async function runMeetingsSync(input) {
             };
         }
         await stateStore.markRunStarted(new Date());
+        // Emit all files as pending so the UI shows the full queue
+        for (const [index, file] of selected.entries()) {
+            onProgress({ phase: "processing", total: selected.length, current: 0, fileName: file.fileName, status: "pending", progressPercent: 0 });
+        }
         const storageAdapter = createNotesStorageAdapter({
             rootDir: options.storageDir,
             backend: options.storageBackend,
@@ -67,40 +81,88 @@ export async function runMeetingsSync(input) {
         let failed = 0;
         const savedSources = [];
         const processedForState = [];
-        for (const [index, file] of selected.entries()) {
-            const tag = `[${index + 1}/${selected.length}]`;
-            logger.log(`${tag} ${file.fileName}`);
-            onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "downloading" });
+        // Pipeline: download next file from USB while previous file is being
+        // transcribed/summarized.  At most one processing job runs at a time.
+        let pendingProcess = null;
+        async function settlePending() {
+            if (!pendingProcess)
+                return;
+            const { promise, file: pFile, index: pIdx } = pendingProcess;
+            const pTag = `[${pIdx + 1}/${selected.length}]`;
+            pendingProcess = null;
             try {
-                const result = await workflow.processRecording(file, (received, total) => {
-                    if (received === total) {
-                        logger.log(`${tag} download complete (${total} bytes)`);
-                        onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "transcribing" });
-                    }
-                });
+                const result = await promise;
                 if (result.skipped) {
                     skipped += 1;
-                    processedForState.push(file);
-                    await stateStore.markFileProcessed(file);
-                    logger.log(`${tag} skipped (already indexed in ${result.indexPath})`);
-                    onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "skipped" });
+                    processedForState.push(pFile);
+                    await stateStore.markFileProcessed(pFile);
+                    logger.log(`${pTag} skipped (already indexed in ${result.indexPath})`);
+                    onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "skipped", progressPercent: 100 });
                 }
                 else {
                     saved += 1;
-                    savedSources.push(file.fileName);
-                    processedForState.push(file);
-                    await stateStore.markFileProcessed(file);
-                    logger.log(`${tag} saved -> ${result.notePath}`);
-                    onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "saved" });
+                    savedSources.push(pFile.fileName);
+                    processedForState.push(pFile);
+                    await stateStore.markFileProcessed(pFile);
+                    logger.log(`${pTag} saved -> ${result.notePath}`);
+                    onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "saved", progressPercent: 100 });
                 }
             }
             catch (error) {
                 failed += 1;
-                logger.error(`${tag} failed:`, error);
-                onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", error: String(error instanceof Error ? error.message : error) });
+                logger.error(`${pTag} failed:`, error);
+                onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
             }
         }
-        onProgress({ phase: "done", total: selected.length, current: selected.length, fileName: "", status: "saved" });
+        for (const [index, file] of selected.entries()) {
+            const tag = `[${index + 1}/${selected.length}]`;
+            logger.log(`${tag} ${file.fileName}`);
+            onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "downloading", progressPercent: 0 });
+            try {
+                // Stage 1: Download from USB (overlaps with previous file's processing)
+                let lastEmittedDownloadPct = -1;
+                const downloaded = await withTimeout(workflow.downloadRecording(file, (received, total) => {
+                    const downloadFraction = total > 0 ? received / total : 0;
+                    const filePct = Math.round(downloadFraction * WEIGHT_DOWNLOAD);
+                    if (filePct !== lastEmittedDownloadPct) {
+                        lastEmittedDownloadPct = filePct;
+                        onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "downloading", progressPercent: filePct });
+                    }
+                    if (received === total) {
+                        logger.log(`${tag} download complete (${total} bytes)`);
+                    }
+                }), PER_FILE_TIMEOUT_MS, `download ${file.fileName}`);
+                if (downloaded.skipped) {
+                    skipped += 1;
+                    processedForState.push(file);
+                    await stateStore.markFileProcessed(file);
+                    logger.log(`${tag} skipped (already indexed in ${downloaded.indexPath})`);
+                    onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "skipped", progressPercent: 100 });
+                    continue;
+                }
+                // Wait for previous file's processing before starting new one
+                await settlePending();
+                // Stage 2: Kick off transcribe + summarize + save in background
+                onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "transcribing", progressPercent: WEIGHT_DOWNLOAD });
+                pendingProcess = {
+                    promise: withTimeout(workflow.processDownloadedRecording(downloaded, (stage) => {
+                        if (stage === "summarizing") {
+                            onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "summarizing", progressPercent: WEIGHT_DOWNLOAD + WEIGHT_TRANSCRIBE });
+                        }
+                    }), PER_FILE_TIMEOUT_MS, `process ${file.fileName}`),
+                    file,
+                    index,
+                };
+            }
+            catch (error) {
+                failed += 1;
+                logger.error(`${tag} failed:`, error);
+                onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
+            }
+        }
+        // Wait for the last file's processing to complete
+        await settlePending();
+        onProgress({ phase: "done", total: selected.length, current: selected.length, fileName: "", status: "saved", progressPercent: 100 });
         // Mark run completed (files already saved incrementally, this updates lastSuccessfulSyncAt)
         await stateStore.markRunCompleted({ completedAt: new Date(), processed: processedForState });
         logger.log(`[HiDock Sync] end at ${new Date().toISOString()} saved=${saved}, skipped=${skipped}, failed=${failed}, storage=${options.storageDir}, backend=${options.storageBackend}, state=${options.stateFile}`);
@@ -137,7 +199,7 @@ function selectFiles(files, options) {
         selected = selected.filter((file) => !isWhisperRecording(file.fileName));
     }
     if (typeof options.limit === "number" && options.limit > 0) {
-        selected = selected.slice(-options.limit);
+        selected = selected.slice(0, options.limit);
     }
     return selected;
 }
@@ -145,9 +207,9 @@ function compareByDateThenName(a, b) {
     const ta = parseHiDockRecordingDate(a.fileName)?.getTime() ?? 0;
     const tb = parseHiDockRecordingDate(b.fileName)?.getTime() ?? 0;
     if (ta !== tb) {
-        return ta - tb;
+        return tb - ta; // newest first
     }
-    return a.fileName.localeCompare(b.fileName);
+    return b.fileName.localeCompare(a.fileName);
 }
 const DEFAULT_STORAGE_DIR = "/Users/seansong/seanslab/Obsidian/OpenClawWorkspace/MeetingNotes";
 export function parseArgs(argv, env = process.env) {
@@ -162,8 +224,8 @@ export function parseArgs(argv, env = process.env) {
         memdockCollection: env.MEMDOCK_COLLECTION || undefined,
         memdockTimeoutMs: undefined,
         whisperModel: env.WHISPER_MODEL ?? "moonshine",
-        summaryModel: env.SUMMARY_MODEL ?? "qwen3.5:9b",
-        ollamaHost: env.OLLAMA_HOST ?? "http://localhost:11434",
+        summaryModel: env.SUMMARY_MODEL ?? "mlx-community/Qwen3.5-9B-4bit",
+        ollamaHost: env.LLM_HOST ?? env.OLLAMA_HOST ?? "http://localhost:8080",
         language: (env.MOONSHINE_LANGUAGE ?? env.WHISPER_LANGUAGE) || undefined,
         prompt: env.WHISPER_PROMPT || undefined,
         temperature: undefined,

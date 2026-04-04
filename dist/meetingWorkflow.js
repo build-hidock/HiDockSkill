@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { truncateWords } from "./meetingStorage.js";
 import { LocalMeetingStorageAdapter } from "./notesStorage.js";
 import { HiDockWhisperSkill } from "./skill.js";
-import { formatSpeakerTranscript } from "./transcribe.js";
+import { formatSpeakerTranscript, transcribeAudio } from "./transcribe.js";
 const MONTH_NAME_TO_INDEX = {
     jan: 0,
     feb: 1,
@@ -30,27 +30,57 @@ export class HiDockMeetingWorkflow {
             options.storageAdapter ??
                 new LocalMeetingStorageAdapter({ rootDir: options.storageRootDir });
     }
-    async processRecording(file, onProgress) {
+    /**
+     * Download a recording from the device (USB-bound stage).
+     * Returns audio bytes ready for offline processing.
+     */
+    async downloadRecording(file, onProgress) {
         const documentType = isWhisperRecording(file.fileName)
             ? "whisper"
             : "meeting";
         const indexPath = this.storage.getIndexPath(documentType);
         if (await this.storage.isIndexed(file.fileName, documentType)) {
-            return {
-                sourceFileName: file.fileName,
-                documentType,
-                notePath: "",
-                indexPath,
-                skipped: true,
-            };
+            return { file, audioBytes: new Uint8Array(), audioCodec: "mp3", documentType, indexPath, skipped: true };
         }
-        const transcription = await this.transcribeSkill.transcribeFile(file, onProgress);
+        const downloadOptions = {
+            expectedSize: file.fileSize,
+            ...(onProgress ? { onProgress } : {}),
+        };
+        const audioBytes = await this.client.withConnection(() => this.client.downloadFile(file, downloadOptions));
+        return {
+            file,
+            audioBytes,
+            audioCodec: file.audioProfile?.codec ?? "mp3",
+            documentType,
+            indexPath,
+            skipped: false,
+        };
+    }
+    /**
+     * Transcribe, summarize, and save a previously downloaded recording.
+     * This stage is CPU/LLM-bound and does not touch USB.
+     */
+    async processDownloadedRecording(downloaded, onStageChange) {
+        const { file, documentType, indexPath } = downloaded;
+        if (downloaded.skipped) {
+            return { sourceFileName: file.fileName, documentType, notePath: "", indexPath, skipped: true };
+        }
+        if (onStageChange)
+            onStageChange("transcribing");
+        const transcription = await transcribeAudio({
+            audioBytes: downloaded.audioBytes,
+            sourceFileName: file.fileName,
+            fileVersion: file.fileVersion,
+            ...(this.options.language ? { language: this.options.language } : {}),
+            ...(this.options.pythonBin ? { pythonBin: this.options.pythonBin } : {}),
+        });
         const timestamp = parseHiDockRecordingDate(file.fileName) ?? new Date();
-        // Format transcript with speaker labels if available
         const hasSpeakers = transcription.speakerSegments && transcription.speakerSegments.length > 0;
         const transcriptForLlm = hasSpeakers
             ? formatSpeakerTranscript(transcription.speakerSegments)
             : transcription.text;
+        if (onStageChange)
+            onStageChange("summarizing");
         const summary = await summarizeTranscriptWithOllama({
             transcript: transcriptForLlm,
             sourceFileName: file.fileName,
@@ -58,7 +88,6 @@ export class HiDockMeetingWorkflow {
             ...(this.options.summaryModel ? { model: this.options.summaryModel } : {}),
             ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
         });
-        // Resolve speaker names with a dedicated focused LLM call
         let speakerMap = summary.speakerMap ?? new Map();
         if (hasSpeakers && speakerMap.size === 0 && (transcription.speakerCount ?? 0) > 0) {
             speakerMap = await resolveSpeakerNames({
@@ -68,11 +97,9 @@ export class HiDockMeetingWorkflow {
                 ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
             });
         }
-        // Apply resolved speaker names back to transcript
         const finalTranscript = speakerMap.size > 0
             ? applySpeakerNames(transcriptForLlm, speakerMap)
             : transcriptForLlm;
-        // Update attendee list with resolved names
         const resolvedAttendee = speakerMap.size > 0
             ? [...speakerMap.values()].filter((n) => n !== "Unknown").join(", ") || summary.attendee
             : summary.attendee;
@@ -88,11 +115,10 @@ export class HiDockMeetingWorkflow {
         const saved = documentType === "whisper"
             ? await this.storage.saveWhisper(normalized)
             : await this.storage.saveMeeting(normalized);
-        // Save audio file alongside the note for playback
-        if (!saved.skipped && transcription.audioBytes.length > 0) {
-            const ext = transcription.audioCodec === "wav" ? ".wav" : ".mp3";
+        if (!saved.skipped && downloaded.audioBytes.length > 0) {
+            const ext = downloaded.audioCodec === "wav" ? ".wav" : ".mp3";
             const audioPath = saved.notePath.replace(/\.md$/, ext);
-            await fs.writeFile(audioPath, transcription.audioBytes);
+            await fs.writeFile(audioPath, downloaded.audioBytes);
         }
         return {
             sourceFileName: file.fileName,
@@ -101,6 +127,14 @@ export class HiDockMeetingWorkflow {
             indexPath: saved.indexPath,
             skipped: saved.skipped,
         };
+    }
+    /** Convenience: download + process in one call (legacy sequential path). */
+    async processRecording(file, onProgress, onStageChange) {
+        const downloaded = await this.downloadRecording(file, onProgress);
+        return this.processDownloadedRecording(downloaded, (stage) => {
+            if (stage === "summarizing" && onStageChange)
+                onStageChange("summarizing");
+        });
     }
     async processAllRecordings(onItem) {
         const { files } = await this.client.listFiles();
@@ -189,22 +223,22 @@ const SPEAKER_ADDENDUM = "\n\nThe transcript has speaker labels like [Speaker 0]
     "At the very end of your output, add a line:\n" +
     "SPEAKER_MAP: Speaker 0=Name1, Speaker 1=Name2, ...";
 async function summarizeTranscriptWithOllama(input) {
-    const model = input.model ?? "qwen3.5:9b";
-    const host = input.ollamaHost ?? "http://localhost:11434";
+    const model = input.model ?? "mlx-community/Qwen3.5-9B-4bit";
+    const host = input.ollamaHost ?? "http://localhost:8080";
     const transcript = input.transcript.trim();
     const clippedTranscript = transcript.slice(0, 30000);
     const prompt = input.hasSpeakerLabels
         ? MEETING_SUMMARY_PROMPT + SPEAKER_ADDENDUM
         : MEETING_SUMMARY_PROMPT;
     try {
-        const rawContent = await streamOllamaChat(host, {
+        const rawContent = await streamLlmChat(host, {
             model,
             messages: [
                 { role: "system", content: prompt },
                 {
                     role: "user",
                     content: `Source filename: ${input.sourceFileName}\n` +
-                        `Transcript:\n${clippedTranscript || "(empty transcript)"}`,
+                        `Transcript:\n${clippedTranscript || "(empty transcript)"}\n\n/no_think`,
                 },
             ],
         });
@@ -256,14 +290,21 @@ function parseMeetingSummaryMarkdown(content) {
     }
     return { title, attendee, brief, summary };
 }
-async function streamOllamaChat(host, body) {
-    const response = await fetch(`${host}/api/chat`, {
+async function streamLlmChat(host, body) {
+    // Detect API style from host URL
+    const isOllama = host.includes("11434");
+    const url = isOllama ? `${host}/api/chat` : `${host}/v1/chat/completions`;
+    const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, stream: true }),
+        body: JSON.stringify({
+            ...body,
+            stream: true,
+            ...(!isOllama ? { max_tokens: 4096 } : {}),
+        }),
     });
     if (!response.ok) {
-        throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
+        throw new Error(`LLM server returned ${response.status}: ${await response.text()}`);
     }
     let content = "";
     const reader = response.body.getReader();
@@ -274,12 +315,21 @@ async function streamOllamaChat(host, body) {
             break;
         const text = decoder.decode(value, { stream: true });
         for (const line of text.split("\n")) {
-            if (!line)
+            const trimmed = line.replace(/^data: /, "").trim();
+            if (!trimmed || trimmed === "[DONE]")
                 continue;
             try {
-                const obj = JSON.parse(line);
-                if (obj.message?.content)
-                    content += obj.message.content;
+                const obj = JSON.parse(trimmed);
+                // Ollama format: { message: { content } }
+                const ollamaContent = obj.message?.content;
+                if (ollamaContent) {
+                    content += ollamaContent;
+                    continue;
+                }
+                // OpenAI format: { choices: [{ delta: { content } }] }
+                const choices = obj.choices;
+                if (choices?.[0]?.delta?.content)
+                    content += choices[0].delta.content;
             }
             catch {
                 // partial JSON line, ignore
@@ -418,18 +468,18 @@ export async function resolveSpeakerNames(input) {
     if (heuristicMap.size > 0)
         return heuristicMap;
     // Strategy 2: LLM call
-    const host = input.ollamaHost ?? "http://localhost:11434";
-    const model = input.model ?? "qwen3.5:9b";
+    const host = input.ollamaHost ?? "http://localhost:8080";
+    const model = input.model ?? "mlx-community/Qwen3.5-9B-4bit";
     const clipped = input.transcript.slice(0, 5000);
     const prompt = `Who is each speaker? List each as "Speaker N = Name".\n` +
         `Example:\nSpeaker 0 = Alice\nSpeaker 1 = Bob\n\n` +
         `If unknown, write "Speaker N = Unknown".`;
     try {
-        const rawContent = await streamOllamaChat(host, {
+        const rawContent = await streamLlmChat(host, {
             model,
             messages: [
                 { role: "system", content: prompt },
-                { role: "user", content: clipped },
+                { role: "user", content: clipped + "\n\n/no_think" },
             ],
         });
         const content = sanitizeLlmOutput(rawContent);

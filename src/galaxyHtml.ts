@@ -167,13 +167,15 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     margin-top: 24px;
     width: 420px;
     max-width: 90vw;
-    max-height: 340px;
-    overflow-y: auto;
     text-align: left;
   }
-  .sync-progress::-webkit-scrollbar { width: 4px; }
-  .sync-progress::-webkit-scrollbar-track { background: transparent; }
-  .sync-progress::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 2px; }
+  #sync-file-list {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  #sync-file-list::-webkit-scrollbar { width: 4px; }
+  #sync-file-list::-webkit-scrollbar-track { background: transparent; }
+  #sync-file-list::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 2px; }
   .sync-progress-header {
     font-size: 12px;
     color: var(--text-dim);
@@ -181,6 +183,59 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     display: flex;
     justify-content: space-between;
   }
+  #sync-progress-pct {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--purple-light);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- sync popup (over galaxy view) ---------- */
+  .sync-popup {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 340px;
+    max-height: 50vh;
+    background: rgba(15,10,30,0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(168,85,247,0.25);
+    border-radius: 12px;
+    padding: 16px;
+    z-index: 1000;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .sync-popup.hidden {
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
+  }
+  .sync-popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .sync-popup-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--purple-light);
+  }
+  #sync-popup-pct {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--purple-light);
+    font-variant-numeric: tabular-nums;
+  }
+  .sync-popup .sync-progress-bar { margin-bottom: 10px; }
+  .sync-popup-files {
+    max-height: 180px;
+    overflow-y: auto;
+    font-size: 11px;
+  }
+  .sync-popup-files::-webkit-scrollbar { width: 3px; }
+  .sync-popup-files::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 2px; }
   .sync-progress-bar {
     height: 4px;
     background: rgba(168,85,247,0.15);
@@ -353,6 +408,28 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     background: rgba(168,85,247,0.15);
     color: var(--text-primary);
     border-color: rgba(168,85,247,0.3);
+  }
+  .modal-delete {
+    position: absolute;
+    top: 18px; right: 60px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid rgba(239,68,68,0.25);
+    background: rgba(239,68,68,0.08);
+    color: rgba(239,68,68,0.7);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s;
+  }
+  .modal-delete:hover {
+    background: rgba(239,68,68,0.18);
+    color: #ef4444;
+    border-color: rgba(239,68,68,0.4);
   }
   .attendee-tag {
     background: rgba(168,85,247,0.1);
@@ -866,11 +943,22 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   <div class="sync-progress" id="sync-progress" style="display:none;">
     <div class="sync-progress-header">
       <span id="sync-progress-label">Processing...</span>
+      <span id="sync-progress-pct"></span>
       <span id="sync-progress-count"></span>
     </div>
     <div class="sync-progress-bar"><div class="sync-progress-fill" id="sync-progress-fill" style="width:0%"></div></div>
     <div id="sync-file-list"></div>
   </div>
+</div>
+
+<!-- Sync popup (shown over Galaxy view when new recordings detected) -->
+<div id="sync-popup" class="sync-popup hidden">
+  <div class="sync-popup-header">
+    <span class="sync-popup-title">Syncing new recordings</span>
+    <span id="sync-popup-pct"></span>
+  </div>
+  <div class="sync-progress-bar"><div class="sync-popup-fill" id="sync-popup-fill" style="width:0%"></div></div>
+  <div id="sync-popup-files" class="sync-popup-files"></div>
 </div>
 
 <!-- Galaxy UI (hidden during sync) -->
@@ -912,6 +1000,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 <div id="note-overlay">
   <div id="note-modal">
     <div class="modal-header">
+      <button class="modal-delete" id="nm-delete-btn">&#x1f5d1; Delete</button>
       <button class="modal-close" onclick="closeNoteModal()">&times;</button>
       <h2 id="nm-title"></h2>
       <div class="modal-meta">
@@ -999,27 +1088,28 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     pending: "Pending"
   };
 
-  function startPolling() {
-    pollTimer = setInterval(function() {
-      // Poll both data and progress
-      fetch("/progress").then(function(r) { return r.json(); }).then(function(p) {
-        updateSyncProgress(p);
-      }).catch(function() {});
+  function pollOnce() {
+    fetch("/progress").then(function(r) { return r.json(); }).then(function(p) {
+      updateSyncProgress(p);
+    }).catch(function() {});
 
-      fetch("/data.json").then(function(res) {
-        if (res.status === 200) {
-          return res.json();
-        }
-        return null;
-      }).then(function(data) {
-        if (data && data.nodes) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-          GALAXY_DATA = data;
-          transitionToGalaxy(data);
-        }
-      }).catch(function() { /* ignore, retry */ });
-    }, 1500);
+    fetch("/data.json").then(function(res) {
+      if (res.status === 200) {
+        return res.json();
+      }
+      return null;
+    }).then(function(data) {
+      if (data && data.nodes) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        GALAXY_DATA = data;
+        transitionToGalaxy(data);
+      }
+    }).catch(function() { /* ignore, retry */ });
+  }
+
+  function startPolling() {
+    pollOnce(); // immediate first check — avoids flash when data already exists
+    pollTimer = setInterval(pollOnce, 1500);
   }
 
   function updateSyncProgress(p) {
@@ -1038,14 +1128,20 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       statusText.innerHTML = 'Processing ' + p.total + ' recordings<span class="sync-dots"></span>';
       progressEl.style.display = "block";
       document.getElementById("sync-progress-label").textContent = p.current + " of " + p.total;
+      // Smooth progress: sum per-item progressPercent
+      var totalPct = 0;
+      p.items.forEach(function(item) { totalPct += (item.progressPercent || 0); });
+      var pct = p.total > 0 ? Math.round(totalPct / p.total) : 0;
+      document.getElementById("sync-progress-pct").textContent = pct + "%";
       document.getElementById("sync-progress-count").textContent = done + " done";
-      var pct = Math.round((done / p.total) * 100);
       document.getElementById("sync-progress-fill").style.width = pct + "%";
 
-      // Render file list (show last 8 items, most recent first)
-      var visible = p.items.slice(-8).reverse();
+      // Render file list: active/completed items first, then pending (all visible, scrollable)
+      var active = p.items.filter(function(i) { return i.status !== "pending"; });
+      var pending = p.items.filter(function(i) { return i.status === "pending"; });
+      var ordered = active.concat(pending);
       var html = "";
-      visible.forEach(function(item) {
+      ordered.forEach(function(item) {
         var shortName = item.fileName.replace(/\\.hda$/i, "");
         var statusClass = item.status;
         var statusLabel = STATUS_LABELS[item.status] || item.status;
@@ -1062,7 +1158,62 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     }
   }
 
+  // Keep polling progress even on Galaxy view — show popup for new syncs
+  var galaxyPollTimer = null;
+  function startGalaxyProgressPoll() {
+    if (galaxyPollTimer) return;
+    galaxyPollTimer = setInterval(function() {
+      fetch("/progress").then(function(r) { return r.json(); }).then(function(p) {
+        updateSyncPopup(p);
+      }).catch(function() {});
+    }, 1500);
+  }
+
+  function updateSyncPopup(p) {
+    var popup = document.getElementById("sync-popup");
+    if (!popup) return;
+
+    // Show popup when processing, hide when done/connecting with no items
+    if (p.phase === "processing" && p.total > 0) {
+      popup.classList.remove("hidden");
+      var totalPct = 0;
+      p.items.forEach(function(item) { totalPct += (item.progressPercent || 0); });
+      var pct = p.total > 0 ? Math.round(totalPct / p.total) : 0;
+      document.getElementById("sync-popup-pct").textContent = pct + "%";
+      document.getElementById("sync-popup-fill").style.width = pct + "%";
+      // Show active items only (not pending)
+      var active = p.items.filter(function(i) { return i.status !== "pending"; });
+      var html = "";
+      active.slice(-6).forEach(function(item) {
+        var shortName = item.fileName.replace(/\\.hda$/i, "");
+        var statusLabel = STATUS_LABELS[item.status] || item.status;
+        html += '<div class="sync-file-item">';
+        html += '<span class="sync-file-name">' + escHtml(shortName) + '</span>';
+        html += '<span class="sync-file-status ' + item.status + '">' + statusLabel + '</span>';
+        html += '</div>';
+      });
+      document.getElementById("sync-popup-files").innerHTML = html;
+    } else if (p.phase === "done") {
+      popup.classList.add("hidden");
+      // Refresh galaxy data
+      fetch("/data.json").then(function(res) {
+        if (res.status === 200) return res.json();
+        return null;
+      }).then(function(data) {
+        if (data && data.nodes) {
+          GALAXY_DATA = data;
+          transitionToGalaxy(data);
+        }
+      }).catch(function() {});
+    } else if (p.phase === "connecting" && p.total === 0) {
+      // No active sync — keep popup hidden
+    }
+  }
+
   function transitionToGalaxy(data) {
+    // Start polling for sync progress (popup mode)
+    startGalaxyProgressPoll();
+
     // Update stats bar
     var totalNotes = data.nodes.length;
     var newNotes = data.nodes.filter(function(n) { return n.isNew; }).length;
@@ -1687,6 +1838,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
           summaryEl.textContent = "(unable to load)";
         });
 
+      // Wire delete button
+      var deleteBtn = document.getElementById("nm-delete-btn");
+      deleteBtn.onclick = function() { deleteNote(d); };
+
       // Show modal with animation
       var overlay = document.getElementById("note-overlay");
       overlay.style.display = "flex";
@@ -1711,6 +1866,29 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
         _transcriptLines = [];
       }, 250);
     };
+
+    function deleteNote(d) {
+      if (!confirm("Delete this note?\\n\\n\\"" + d.title + "\\"\\n\\nThis will permanently remove the note, audio, and index entry.")) return;
+      var btn = document.getElementById("nm-delete-btn");
+      btn.textContent = "Deleting...";
+      btn.disabled = true;
+      fetch("/note?id=" + encodeURIComponent(d.id), { method: "DELETE" })
+        .then(function(res) { return res.ok ? res.json() : Promise.reject("failed"); })
+        .then(function() {
+          closeNoteModal();
+          // Remove node from local graph data and re-render
+          if (GALAXY_DATA) {
+            GALAXY_DATA.nodes = GALAXY_DATA.nodes.filter(function(n) { return n.id !== d.id; });
+            GALAXY_DATA.edges = GALAXY_DATA.edges.filter(function(e) { return e.source !== d.id && e.target !== d.id; });
+            transitionToGalaxy(GALAXY_DATA);
+          }
+        })
+        .catch(function() {
+          alert("Failed to delete note.");
+          btn.textContent = "\\ud83d\\uddd1 Delete";
+          btn.disabled = false;
+        });
+    }
 
     // Close on overlay click (not modal content)
     document.getElementById("note-overlay").addEventListener("click", function(e) {

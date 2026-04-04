@@ -20,8 +20,11 @@ const textEncoder = new TextEncoder();
 export interface DownloadFileOptions {
   expectedSize?: number;
   readLimit?: number;
+  readTimeoutMs?: number;
   onProgress?: (receivedBytes: number, expectedBytes: number) => void;
 }
+
+const DEFAULT_READ_TIMEOUT_MS = 30_000; // 30s stale-read timeout
 
 export interface HiDockTransportLike {
   open(): Promise<void>;
@@ -144,6 +147,7 @@ export class HiDockClient {
       expectedSize,
       readLimit,
       options.onProgress,
+      options.readTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS,
     );
   }
 
@@ -153,12 +157,20 @@ export class HiDockClient {
     expectedSize: number,
     readLimit: number,
     onProgress?: (receivedBytes: number, expectedBytes: number) => void,
+    readTimeoutMs: number = DEFAULT_READ_TIMEOUT_MS,
   ): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];
     let received = 0;
 
     for (let reads = 0; reads < readLimit && received < expectedSize; reads += 1) {
-      const frames = await this.transport.readFrames();
+      const frames = await Promise.race([
+        this.transport.readFrames(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(
+            `USB read timeout after ${readTimeoutMs / 1000}s (received ${received}/${expectedSize} bytes)`,
+          )), readTimeoutMs),
+        ),
+      ]);
       for (const frame of frames) {
         if (frame.commandId !== commandId) {
           continue;

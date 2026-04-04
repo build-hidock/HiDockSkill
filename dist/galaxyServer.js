@@ -14,14 +14,62 @@ export function startGalaxyServer(options) {
         const server = http.createServer((req, res) => {
             const url = new URL(req.url ?? "/", `http://${host}:${port}`);
             const pathname = url.pathname;
-            if (req.method !== "GET" && req.method !== "HEAD") {
+            if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
                 res.writeHead(405, { "Content-Type": "text/plain" });
                 res.end("Method Not Allowed");
                 return;
             }
             const isHead = req.method === "HEAD";
+            // DELETE /note?id=... — delete note, audio, and index entry
+            if (req.method === "DELETE" && pathname === "/note") {
+                const nodeId = url.searchParams.get("id");
+                if (!nodeId || !graphData) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Not Found");
+                    return;
+                }
+                const node = graphData.nodes.find((n) => n.id === nodeId);
+                if (!node) {
+                    res.writeHead(404, { "Content-Type": "text/plain" });
+                    res.end("Node not found");
+                    return;
+                }
+                (async () => {
+                    try {
+                        // Delete note file
+                        await fs.unlink(node.notePath).catch(() => { });
+                        // Delete audio (.mp3 / .wav)
+                        await fs.unlink(node.notePath.replace(/\.md$/, ".mp3")).catch(() => { });
+                        await fs.unlink(node.notePath.replace(/\.md$/, ".wav")).catch(() => { });
+                        // Remove from in-memory graph
+                        graphData.nodes = graphData.nodes.filter((n) => n.id !== nodeId);
+                        graphData.edges = graphData.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
+                        // Remove from index file (line containing the source filename)
+                        const indexName = node.kind === "whisper" ? "whisperindex.md" : "meetingindex.md";
+                        const storageDir = node.notePath.replace(/\/(meetings|whispers)\/.*$/, "");
+                        const indexPath = storageDir + "/" + indexName;
+                        try {
+                            const indexContent = await fs.readFile(indexPath, "utf8");
+                            const filtered = indexContent.split("\n").filter((line) => !line.includes(node.source)).join("\n");
+                            await fs.writeFile(indexPath, filtered, "utf8");
+                        }
+                        catch { /* index may not exist */ }
+                        res.writeHead(200, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify({ deleted: true }));
+                        log(`DELETE /note -> 200 (${node.notePath})`);
+                    }
+                    catch (err) {
+                        res.writeHead(500, { "Content-Type": "text/plain" });
+                        res.end("Delete failed");
+                        log(`DELETE /note -> 500 (${node.notePath})`);
+                    }
+                })();
+                return;
+            }
             if (pathname === "/") {
-                const html = renderGalaxyHtml(graphData);
+                // Always start in polling mode so the browser never races with a
+                // fast sync that sets graphData before the page loads.
+                const html = renderGalaxyHtml(null);
                 res.writeHead(200, {
                     "Content-Type": "text/html; charset=utf-8",
                     "Cache-Control": "no-cache",
@@ -195,6 +243,13 @@ export function startGalaxyServer(options) {
                 updateData: (data) => {
                     graphData = data;
                     log(`Galaxy data updated: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+                },
+                clearData: () => {
+                    graphData = null;
+                    syncProgress = { phase: "connecting", total: 0, current: 0, items: [] };
+                },
+                resetProgress: () => {
+                    syncProgress = { phase: "connecting", total: 0, current: 0, items: [] };
                 },
                 updateProgress: (progress) => {
                     syncProgress = progress;

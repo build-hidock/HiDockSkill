@@ -30,6 +30,7 @@ export interface HiDockConnectionMonitorOptions {
   ) => Promise<UsbDeviceLike>;
   formatPrompt?: (productName: string) => string;
   onPluggedIn?: (event: HiDockPlugInEvent) => void;
+  onUnplugged?: () => void;
   log?: (message: string) => void;
 }
 
@@ -58,34 +59,19 @@ export async function findHiDockNodeDevice(
   options: NodeUsbDiscoveryOptions = {},
 ): Promise<UsbDeviceLike> {
   const filters = options.filters ?? DEFAULT_NODE_FILTERS;
+
+  // Always use requestDevice() for a fresh USB enumeration.
+  // getDevices() caches stale handles that break after unplug/replug.
   const webusb = createNodeWebUsb();
-  const devices = await webusb.getDevices();
-
-  // Iterate filters first (priority order), then devices.
-  // This ensures higher-priority filters (e.g. H1) match before fallbacks.
-  let matched: typeof devices[number] | undefined;
   for (const filter of filters) {
-    matched = devices.find((device) => {
-      const productMatches =
-        typeof filter.productId === "number"
-          ? device.productId === filter.productId
-          : true;
-      return device.vendorId === filter.vendorId && productMatches;
-    });
-    if (matched) break;
-  }
-
-  if (matched) {
-    return matched as unknown as UsbDeviceLike;
-  }
-
-  const byName = devices.find((device) =>
-    `${device.productName ?? ""} ${device.manufacturerName ?? ""}`
-      .toLowerCase()
-      .includes("hidock"),
-  );
-  if (byName) {
-    return byName as unknown as UsbDeviceLike;
+    try {
+      const device = await webusb.requestDevice({ filters: [filter] });
+      if (device) {
+        return device as unknown as UsbDeviceLike;
+      }
+    } catch {
+      // Filter didn't match — try next
+    }
   }
 
   throw new Error("No HiDock USB device found.");
@@ -143,6 +129,7 @@ export function createHiDockConnectionMonitor(
   const formatPrompt = options.formatPrompt ?? formatHiDockPluggedInPrompt;
   const log = options.log ?? ((message: string) => console.log(message));
   const onPluggedIn = options.onPluggedIn ?? ((event: HiDockPlugInEvent) => log(event.prompt));
+  const onUnplugged = options.onUnplugged;
 
   let timer: NodeJS.Timeout | null = null;
   let isPolling = false;
@@ -177,8 +164,10 @@ export function createHiDockConnectionMonitor(
           log(reason);
         }
       }
+      const justDisconnected = hasObservedState && wasConnected;
       wasConnected = false;
       hasObservedState = true;
+      if (justDisconnected && onUnplugged) onUnplugged();
     }
   }
 
@@ -200,8 +189,10 @@ export function createHiDockConnectionMonitor(
         });
       }
 
+      const justDisconnected = hasObservedState && wasConnected && !isConnected;
       wasConnected = isConnected;
       hasObservedState = true;
+      if (justDisconnected && onUnplugged) onUnplugged();
     } catch (error) {
       const reason = toErrorMessage(error);
       log(`[HiDock USB Watch] poll error: ${reason}`);

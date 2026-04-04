@@ -16,29 +16,19 @@ export function createNodeWebUsb() {
 }
 export async function findHiDockNodeDevice(options = {}) {
     const filters = options.filters ?? DEFAULT_NODE_FILTERS;
+    // Always use requestDevice() for a fresh USB enumeration.
+    // getDevices() caches stale handles that break after unplug/replug.
     const webusb = createNodeWebUsb();
-    const devices = await webusb.getDevices();
-    // Iterate filters first (priority order), then devices.
-    // This ensures higher-priority filters (e.g. H1) match before fallbacks.
-    let matched;
     for (const filter of filters) {
-        matched = devices.find((device) => {
-            const productMatches = typeof filter.productId === "number"
-                ? device.productId === filter.productId
-                : true;
-            return device.vendorId === filter.vendorId && productMatches;
-        });
-        if (matched)
-            break;
-    }
-    if (matched) {
-        return matched;
-    }
-    const byName = devices.find((device) => `${device.productName ?? ""} ${device.manufacturerName ?? ""}`
-        .toLowerCase()
-        .includes("hidock"));
-    if (byName) {
-        return byName;
+        try {
+            const device = await webusb.requestDevice({ filters: [filter] });
+            if (device) {
+                return device;
+            }
+        }
+        catch {
+            // Filter didn't match — try next
+        }
     }
     throw new Error("No HiDock USB device found.");
 }
@@ -87,6 +77,7 @@ export function createHiDockConnectionMonitor(options = {}) {
     const formatPrompt = options.formatPrompt ?? formatHiDockPluggedInPrompt;
     const log = options.log ?? ((message) => console.log(message));
     const onPluggedIn = options.onPluggedIn ?? ((event) => log(event.prompt));
+    const onUnplugged = options.onUnplugged;
     let timer = null;
     let isPolling = false;
     let hasObservedState = false;
@@ -118,8 +109,11 @@ export function createHiDockConnectionMonitor(options = {}) {
                     log(reason);
                 }
             }
+            const justDisconnected = hasObservedState && wasConnected;
             wasConnected = false;
             hasObservedState = true;
+            if (justDisconnected && onUnplugged)
+                onUnplugged();
         }
     }
     async function pollViaOsDetection() {
@@ -137,8 +131,11 @@ export function createHiDockConnectionMonitor(options = {}) {
                     device: {},
                 });
             }
+            const justDisconnected = hasObservedState && wasConnected && !isConnected;
             wasConnected = isConnected;
             hasObservedState = true;
+            if (justDisconnected && onUnplugged)
+                onUnplugged();
         }
         catch (error) {
             const reason = toErrorMessage(error);
