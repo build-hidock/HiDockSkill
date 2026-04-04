@@ -195,6 +195,8 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
         }
       } catch (error) {
         failed += 1;
+        processedForState.push(pFile);
+        await stateStore.markFileProcessed(pFile);
         logger.error(`${pTag} failed:`, error);
         onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
       }
@@ -254,6 +256,8 @@ export async function runMeetingsSync(input: RunMeetingsSyncOptions): Promise<Sy
         };
       } catch (error) {
         failed += 1;
+        processedForState.push(file);
+        await stateStore.markFileProcessed(file);
         logger.error(`${tag} failed:`, error);
         onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
       }

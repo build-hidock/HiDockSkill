@@ -102,6 +102,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     align-items: center;
     justify-content: center;
     z-index: 500;
+    overflow-y: auto;
     transition: opacity 0.6s ease, visibility 0.6s ease;
   }
   #syncing-overlay.hidden {
@@ -431,6 +432,100 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     color: #ef4444;
     border-color: rgba(239,68,68,0.4);
   }
+
+  /* ---------- delete confirm dialog ---------- */
+  #delete-confirm-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(5, 0, 15, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 400;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  #delete-confirm-overlay.open { display: flex; opacity: 1; }
+  .delete-confirm-box {
+    width: 380px;
+    max-width: 90vw;
+    background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 14px;
+    padding: 28px 24px 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(239,68,68,0.06);
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+    text-align: center;
+  }
+  #delete-confirm-overlay.open .delete-confirm-box { transform: scale(1); }
+  .delete-confirm-icon {
+    font-size: 32px;
+    margin-bottom: 14px;
+    opacity: 0.85;
+  }
+  .delete-confirm-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+  .delete-confirm-note {
+    font-size: 13px;
+    color: var(--purple-lighter);
+    background: rgba(168,85,247,0.08);
+    border: 1px solid rgba(168,85,247,0.12);
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin: 12px 0 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .delete-confirm-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+  .delete-confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }
+  .delete-confirm-actions button {
+    height: 36px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0 22px;
+    transition: all 0.15s;
+  }
+  .btn-cancel {
+    border: 1px solid rgba(168,85,247,0.2);
+    background: rgba(168,85,247,0.06);
+    color: var(--text-secondary);
+  }
+  .btn-cancel:hover {
+    background: rgba(168,85,247,0.12);
+    color: var(--text-primary);
+    border-color: rgba(168,85,247,0.3);
+  }
+  .btn-delete-confirm {
+    border: 1px solid rgba(239,68,68,0.3);
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+  }
+  .btn-delete-confirm:hover {
+    background: rgba(239,68,68,0.25);
+    border-color: rgba(239,68,68,0.5);
+  }
+  .btn-delete-confirm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .attendee-tag {
     background: rgba(168,85,247,0.1);
     border: 1px solid rgba(168,85,247,0.2);
@@ -1031,6 +1126,19 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   </div>
 </div>
 
+<div id="delete-confirm-overlay">
+  <div class="delete-confirm-box">
+    <div class="delete-confirm-icon">&#x1f5d1;</div>
+    <div class="delete-confirm-title">Delete this note?</div>
+    <div class="delete-confirm-note" id="dc-note-title"></div>
+    <div class="delete-confirm-desc">This will permanently remove the note, audio recording, and index entry.</div>
+    <div class="delete-confirm-actions">
+      <button class="btn-cancel" id="dc-cancel">Cancel</button>
+      <button class="btn-delete-confirm" id="dc-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
 <div id="insights-panel">
   <h2><span>&#x2728;</span> Hot Memory Analysis</h2>
   <div id="insights-topics"></div>
@@ -1169,12 +1277,14 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     }, 1500);
   }
 
+  var lastSyncPopupPhase = null;
   function updateSyncPopup(p) {
     var popup = document.getElementById("sync-popup");
     if (!popup) return;
 
     // Show popup when processing, hide when done/connecting with no items
     if (p.phase === "processing" && p.total > 0) {
+      lastSyncPopupPhase = "processing";
       popup.classList.remove("hidden");
       var totalPct = 0;
       p.items.forEach(function(item) { totalPct += (item.progressPercent || 0); });
@@ -1193,9 +1303,10 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
         html += '</div>';
       });
       document.getElementById("sync-popup-files").innerHTML = html;
-    } else if (p.phase === "done") {
+    } else if (p.phase === "done" && lastSyncPopupPhase !== "done") {
+      lastSyncPopupPhase = "done";
       popup.classList.add("hidden");
-      // Refresh galaxy data
+      // Refresh galaxy data once when sync finishes
       fetch("/data.json").then(function(res) {
         if (res.status === 200) return res.json();
         return null;
@@ -1867,16 +1978,40 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       }, 250);
     };
 
+    var _deleteTarget = null;
     function deleteNote(d) {
-      if (!confirm("Delete this note?\\n\\n\\"" + d.title + "\\"\\n\\nThis will permanently remove the note, audio, and index entry.")) return;
-      var btn = document.getElementById("nm-delete-btn");
+      _deleteTarget = d;
+      document.getElementById("dc-note-title").textContent = d.title;
+      var overlay = document.getElementById("delete-confirm-overlay");
+      var confirmBtn = document.getElementById("dc-confirm");
+      confirmBtn.textContent = "Delete";
+      confirmBtn.disabled = false;
+      overlay.style.display = "flex";
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() { overlay.classList.add("open"); });
+      });
+    }
+
+    function closeDeleteConfirm() {
+      var overlay = document.getElementById("delete-confirm-overlay");
+      overlay.classList.remove("open");
+      setTimeout(function() { overlay.style.display = "none"; }, 200);
+      _deleteTarget = null;
+    }
+
+    document.getElementById("dc-cancel").addEventListener("click", closeDeleteConfirm);
+
+    document.getElementById("dc-confirm").addEventListener("click", function() {
+      if (!_deleteTarget) return;
+      var d = _deleteTarget;
+      var btn = this;
       btn.textContent = "Deleting...";
       btn.disabled = true;
       fetch("/note?id=" + encodeURIComponent(d.id), { method: "DELETE" })
         .then(function(res) { return res.ok ? res.json() : Promise.reject("failed"); })
         .then(function() {
+          closeDeleteConfirm();
           closeNoteModal();
-          // Remove node from local graph data and re-render
           if (GALAXY_DATA) {
             GALAXY_DATA.nodes = GALAXY_DATA.nodes.filter(function(n) { return n.id !== d.id; });
             GALAXY_DATA.edges = GALAXY_DATA.edges.filter(function(e) { return e.source !== d.id && e.target !== d.id; });
@@ -1884,11 +2019,14 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
           }
         })
         .catch(function() {
-          alert("Failed to delete note.");
-          btn.textContent = "\\ud83d\\uddd1 Delete";
+          btn.textContent = "Delete";
           btn.disabled = false;
         });
-    }
+    });
+
+    document.getElementById("delete-confirm-overlay").addEventListener("click", function(e) {
+      if (e.target === this) closeDeleteConfirm();
+    });
 
     // Close on overlay click (not modal content)
     document.getElementById("note-overlay").addEventListener("click", function(e) {
