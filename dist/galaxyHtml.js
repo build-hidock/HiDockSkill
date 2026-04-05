@@ -99,7 +99,6 @@ export function renderGalaxyHtml(data) {
     align-items: center;
     justify-content: center;
     z-index: 500;
-    overflow-y: auto;
     transition: opacity 0.6s ease, visibility 0.6s ease;
   }
   #syncing-overlay.hidden {
@@ -168,12 +167,13 @@ export function renderGalaxyHtml(data) {
     text-align: left;
   }
   #sync-file-list {
-    max-height: 50vh;
-    overflow-y: auto;
+    max-height: 35vh;
+    overflow-y: scroll;
+    scroll-behavior: smooth;
   }
-  #sync-file-list::-webkit-scrollbar { width: 4px; }
-  #sync-file-list::-webkit-scrollbar-track { background: transparent; }
-  #sync-file-list::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 2px; }
+  #sync-file-list::-webkit-scrollbar { width: 6px; display: block; }
+  #sync-file-list::-webkit-scrollbar-track { background: rgba(168,85,247,0.05); border-radius: 3px; }
+  #sync-file-list::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.35); border-radius: 3px; min-height: 30px; }
   .sync-progress-header {
     font-size: 12px;
     color: var(--text-dim);
@@ -1250,12 +1250,17 @@ export function renderGalaxyHtml(data) {
         var shortName = item.fileName.replace(/\\.hda$/i, "");
         var statusClass = item.status;
         var statusLabel = STATUS_LABELS[item.status] || item.status;
-        html += '<div class="sync-file-item">';
+        var isActive = item.status === "downloading" || item.status === "transcribing" || item.status === "summarizing";
+        html += '<div class="sync-file-item' + (isActive ? ' active' : '') + '">';
         html += '<span class="sync-file-name">' + escHtml(shortName) + '</span>';
         html += '<span class="sync-file-status ' + statusClass + '">' + statusLabel + '</span>';
         html += '</div>';
       });
-      document.getElementById("sync-file-list").innerHTML = html;
+      var listEl = document.getElementById("sync-file-list");
+      listEl.innerHTML = html;
+      // Auto-scroll to the active item
+      var activeItem = listEl.querySelector(".sync-file-item.active");
+      if (activeItem) activeItem.scrollIntoView({ block: "nearest" });
     }
 
     if (p.phase === "done") {

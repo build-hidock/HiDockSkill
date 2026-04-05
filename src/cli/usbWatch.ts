@@ -33,7 +33,7 @@ const DEFAULT_INTERVAL_MS = 5000;
 const DEFAULT_FILE_POLL_MS = 15_000; // check for new recordings every 15s
 const DEFAULT_ACTIVE_WINDOW_MINUTES = 5;
 const DEFAULT_OPENCLAW_BIN = "openclaw";
-const DEFAULT_SYNC_DEBOUNCE_MS = 1500;
+const DEFAULT_SYNC_DEBOUNCE_MS = 3000;
 const execFileAsync = promisify(execFile);
 
 interface OpenClawExecResult {

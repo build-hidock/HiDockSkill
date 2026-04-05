@@ -23,7 +23,7 @@ export declare class HiDockClient {
     static fromUsbDevice(device: UsbDeviceLike, options?: HiDockTransportOptions): HiDockClient;
     open(): Promise<void>;
     close(): Promise<void>;
-    withConnection<T>(run: () => Promise<T>): Promise<T>;
+    withConnection<T>(run: () => Promise<T>, retries?: number): Promise<T>;
     getDeviceInfo(): Promise<HiDockDeviceInfo>;
     getDeviceTime(): Promise<HiDockDeviceTime>;
     getFileCount(): Promise<number>;

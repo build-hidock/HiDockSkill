@@ -77,12 +77,41 @@ export async function findHiDockNodeDevice(
   throw new Error("No HiDock USB device found.");
 }
 
+const USB_CONNECT_TIMEOUT_MS = 10_000;
+const USB_CONNECT_RETRIES = 3;
+const USB_RETRY_DELAY_MS = 3_000;
+
+function withUsbTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 export async function createNodeHiDockClient(
   transportOptions: HiDockTransportOptions = {},
   discoveryOptions: NodeUsbDiscoveryOptions = {},
 ): Promise<HiDockClient> {
-  const device = await findHiDockNodeDevice(discoveryOptions);
-  return HiDockClient.fromUsbDevice(device, transportOptions);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < USB_CONNECT_RETRIES; attempt++) {
+    try {
+      const device = await withUsbTimeout(
+        findHiDockNodeDevice(discoveryOptions),
+        USB_CONNECT_TIMEOUT_MS,
+        "USB device discovery",
+      );
+      return HiDockClient.fromUsbDevice(device, transportOptions);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < USB_CONNECT_RETRIES - 1) {
+        await new Promise((r) => setTimeout(r, USB_RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw lastError ?? new Error("Failed to connect to HiDock device");
 }
 
 export function formatHiDockPluggedInPrompt(productName: string): string {

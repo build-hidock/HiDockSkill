@@ -74,12 +74,20 @@ export class HiDockClient {
     }
   }
 
-  async withConnection<T>(run: () => Promise<T>): Promise<T> {
-    await this.open();
-    try {
-      return await run();
-    } finally {
-      await this.close();
+  async withConnection<T>(run: () => Promise<T>, retries = 2): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.open();
+        try {
+          return await run();
+        } finally {
+          await this.close();
+        }
+      } catch (error) {
+        this.connected = false;
+        if (attempt >= retries) throw error;
+        await new Promise((r) => setTimeout(r, 1_000));
+      }
     }
   }
 

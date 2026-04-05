@@ -81,47 +81,15 @@ export async function runMeetingsSync(input) {
         let failed = 0;
         const savedSources = [];
         const processedForState = [];
-        // Pipeline: download next file from USB while previous file is being
-        // transcribed/summarized.  At most one processing job runs at a time.
-        let pendingProcess = null;
-        async function settlePending() {
-            if (!pendingProcess)
-                return;
-            const { promise, file: pFile, index: pIdx } = pendingProcess;
-            const pTag = `[${pIdx + 1}/${selected.length}]`;
-            pendingProcess = null;
-            try {
-                const result = await promise;
-                if (result.skipped) {
-                    skipped += 1;
-                    processedForState.push(pFile);
-                    await stateStore.markFileProcessed(pFile);
-                    logger.log(`${pTag} skipped (already indexed in ${result.indexPath})`);
-                    onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "skipped", progressPercent: 100 });
-                }
-                else {
-                    saved += 1;
-                    savedSources.push(pFile.fileName);
-                    processedForState.push(pFile);
-                    await stateStore.markFileProcessed(pFile);
-                    logger.log(`${pTag} saved -> ${result.notePath}`);
-                    onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "saved", progressPercent: 100 });
-                }
-            }
-            catch (error) {
-                failed += 1;
-                processedForState.push(pFile);
-                await stateStore.markFileProcessed(pFile);
-                logger.error(`${pTag} failed:`, error);
-                onProgress({ phase: "processing", total: selected.length, current: pIdx + 1, fileName: pFile.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
-            }
-        }
+        // Pipeline: downloads run continuously (never blocked by processing).
+        // Processing is chained sequentially but decoupled from the download loop.
+        let processingChain = Promise.resolve();
         for (const [index, file] of selected.entries()) {
             const tag = `[${index + 1}/${selected.length}]`;
             logger.log(`${tag} ${file.fileName}`);
             onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "downloading", progressPercent: 0 });
             try {
-                // Stage 1: Download from USB (overlaps with previous file's processing)
+                // Stage 1: Download from USB (sequential, never blocked by processing)
                 let lastEmittedDownloadPct = -1;
                 const downloaded = await withTimeout(workflow.downloadRecording(file, (received, total) => {
                     const downloadFraction = total > 0 ? received / total : 0;
@@ -142,19 +110,43 @@ export async function runMeetingsSync(input) {
                     onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "skipped", progressPercent: 100 });
                     continue;
                 }
-                // Wait for previous file's processing before starting new one
-                await settlePending();
-                // Stage 2: Kick off transcribe + summarize + save in background
-                onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "transcribing", progressPercent: WEIGHT_DOWNLOAD });
-                pendingProcess = {
-                    promise: withTimeout(workflow.processDownloadedRecording(downloaded, (stage) => {
-                        if (stage === "summarizing") {
-                            onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "summarizing", progressPercent: WEIGHT_DOWNLOAD + WEIGHT_TRANSCRIBE });
+                // Stage 2: Chain transcribe + summarize + save (sequential processing,
+                // but never blocks the download loop — next download starts immediately)
+                const capturedFile = file;
+                const capturedIndex = index;
+                const capturedTag = tag;
+                processingChain = processingChain.then(async () => {
+                    onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "transcribing", progressPercent: WEIGHT_DOWNLOAD });
+                    try {
+                        const result = await withTimeout(workflow.processDownloadedRecording(downloaded, (stage) => {
+                            if (stage === "summarizing") {
+                                onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "summarizing", progressPercent: WEIGHT_DOWNLOAD + WEIGHT_TRANSCRIBE });
+                            }
+                        }), PER_FILE_TIMEOUT_MS, `process ${capturedFile.fileName}`);
+                        if (result.skipped) {
+                            skipped += 1;
+                            processedForState.push(capturedFile);
+                            await stateStore.markFileProcessed(capturedFile);
+                            logger.log(`${capturedTag} skipped (already indexed in ${result.indexPath})`);
+                            onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "skipped", progressPercent: 100 });
                         }
-                    }), PER_FILE_TIMEOUT_MS, `process ${file.fileName}`),
-                    file,
-                    index,
-                };
+                        else {
+                            saved += 1;
+                            savedSources.push(capturedFile.fileName);
+                            processedForState.push(capturedFile);
+                            await stateStore.markFileProcessed(capturedFile);
+                            logger.log(`${capturedTag} saved -> ${result.notePath}`);
+                            onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "saved", progressPercent: 100 });
+                        }
+                    }
+                    catch (error) {
+                        failed += 1;
+                        processedForState.push(capturedFile);
+                        await stateStore.markFileProcessed(capturedFile);
+                        logger.error(`${capturedTag} failed:`, error);
+                        onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
+                    }
+                });
             }
             catch (error) {
                 failed += 1;
@@ -164,8 +156,8 @@ export async function runMeetingsSync(input) {
                 onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
             }
         }
-        // Wait for the last file's processing to complete
-        await settlePending();
+        // Wait for all processing to complete
+        await processingChain;
         onProgress({ phase: "done", total: selected.length, current: selected.length, fileName: "", status: "saved", progressPercent: 100 });
         // Mark run completed (files already saved incrementally, this updates lastSuccessfulSyncAt)
         await stateStore.markRunCompleted({ completedAt: new Date(), processed: processedForState });

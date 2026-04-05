@@ -23,11 +23,15 @@ export class HiDockWebUsbTransport {
             options.defaultResponseReadLimit ?? DEFAULT_RESPONSE_READ_LIMIT;
     }
     async open() {
-        await this.device.open();
+        const timeout = (p, ms, label) => new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);
+            p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+        });
+        await timeout(this.device.open(), 10_000, "device.open");
         if (!this.device.configuration) {
-            await this.device.selectConfiguration(1);
+            await timeout(this.device.selectConfiguration(1), 10_000, "selectConfiguration");
         }
-        await this.device.claimInterface(this.interfaceNumber);
+        await timeout(this.device.claimInterface(this.interfaceNumber), 10_000, "claimInterface");
     }
     async close() {
         try {

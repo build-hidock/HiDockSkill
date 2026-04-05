@@ -217,7 +217,16 @@ const MEETING_SUMMARY_PROMPT = "You are a professional meeting summarizing assis
     "regardless of their level of expertise, can understand the content.\n\n" +
     "This meeting summary is intended for all team members, including those who attended and those who did not, " +
     "serving as a reference for their review and work.\n\n" +
-    "Please output in Markdown format, using appropriate font sizes and formatting symbols (##, ###, -).";
+    "Please output in Markdown format, using appropriate font sizes and formatting symbols (##, ###, -).\n\n" +
+    "## ACCURACY RULES (CRITICAL — follow these strictly)\n\n" +
+    "1. ONLY include information EXPLICITLY stated in the transcript. Do NOT infer, extrapolate, or add context.\n" +
+    "2. Do NOT invent deadlines. If no deadline was stated, write \"Deadline: Not specified\" or omit.\n" +
+    "3. Do NOT invent tools, features, or services not mentioned. If unsure whether something was discussed, leave it out.\n" +
+    "4. Attribute statements to the correct speaker. If speaker identity is unclear, write \"A participant\" rather than guessing.\n" +
+    "5. Use the exact terminology from the transcript. Do NOT substitute similar-sounding terms.\n" +
+    "6. For action items, only list owner and deadline if they were EXPLICITLY assigned in the discussion.\n" +
+    "7. If a decision was tentative (\"we like it\", \"let's try\"), do NOT overstate it as \"approved\" or \"finalized\".\n" +
+    "8. Be thorough but accurate. Cover all topics discussed.";
 const SPEAKER_ADDENDUM = "\n\nThe transcript has speaker labels like [Speaker 0], [Speaker 1]. " +
     "Identify real names from context (introductions, addressing by name). " +
     "At the very end of your output, add a line:\n" +
@@ -300,7 +309,11 @@ async function streamLlmChat(host, body) {
         body: JSON.stringify({
             ...body,
             stream: true,
-            ...(!isOllama ? { max_tokens: 4096 } : {}),
+            temperature: 0.5,
+            top_p: 0.8,
+            ...(isOllama
+                ? { options: { num_predict: 4096, temperature: 0.5, top_p: 0.8 } }
+                : { max_tokens: 4096 }),
         }),
     });
     if (!response.ok) {

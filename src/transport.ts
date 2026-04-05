@@ -69,11 +69,16 @@ export class HiDockWebUsbTransport {
   }
 
   async open(): Promise<void> {
-    await this.device.open();
+    const timeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);
+        p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+      });
+    await timeout(this.device.open(), 10_000, "device.open");
     if (!this.device.configuration) {
-      await this.device.selectConfiguration(1);
+      await timeout(this.device.selectConfiguration(1), 10_000, "selectConfiguration");
     }
-    await this.device.claimInterface(this.interfaceNumber);
+    await timeout(this.device.claimInterface(this.interfaceNumber), 10_000, "claimInterface");
   }
 
   async close(): Promise<void> {

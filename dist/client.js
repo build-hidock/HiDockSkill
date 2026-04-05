@@ -33,13 +33,23 @@ export class HiDockClient {
             this.connected = false;
         }
     }
-    async withConnection(run) {
-        await this.open();
-        try {
-            return await run();
-        }
-        finally {
-            await this.close();
+    async withConnection(run, retries = 2) {
+        for (let attempt = 0;; attempt++) {
+            try {
+                await this.open();
+                try {
+                    return await run();
+                }
+                finally {
+                    await this.close();
+                }
+            }
+            catch (error) {
+                this.connected = false;
+                if (attempt >= retries)
+                    throw error;
+                await new Promise((r) => setTimeout(r, 1_000));
+            }
         }
     }
     async getDeviceInfo() {
