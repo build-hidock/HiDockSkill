@@ -36,20 +36,37 @@ def main() -> None:
     wav_path = sys.argv[1]
     language = sys.argv[2] if len(sys.argv) > 2 else None
 
-    # Step 1: Speaker diarization (also returns VAD speech segments)
-    diar_segments: list[tuple[float, float, int]] = []
-    try:
-        sys.stderr.write("Diarizing...\n")
-        diar_segments = diarize(wav_path)
-        n_speakers = len(set(s[2] for s in diar_segments)) if diar_segments else 0
-        sys.stderr.write(f"  {n_speakers} speakers, {len(diar_segments)} segments\n")
-    except Exception as e:
-        sys.stderr.write(f"  Diarization skipped: {e}\n")
+    # Step 1+2: Run diarization and ASR in parallel (they are independent)
+    from concurrent.futures import ThreadPoolExecutor, Future
 
-    # Step 2: ASR — whole-file transcription, then align to speaker segments
-    sys.stderr.write("Transcribing...\n")
-    asr_segments = transcribe_whisper(wav_path, language)
-    sys.stderr.write(f"  {len(asr_segments)} ASR segments\n")
+    diar_segments: list[tuple[float, float, int]] = []
+    diar_error: str | None = None
+
+    def _run_diarize() -> list[tuple[float, float, int]]:
+        sys.stderr.write("Diarizing...\n")
+        segs = diarize(wav_path)
+        n_speakers = len(set(s[2] for s in segs)) if segs else 0
+        sys.stderr.write(f"  {n_speakers} speakers, {len(segs)} segments\n")
+        return segs
+
+    def _run_asr() -> list[dict]:
+        sys.stderr.write("Transcribing...\n")
+        segs = transcribe_whisper(wav_path, language)
+        sys.stderr.write(f"  {len(segs)} ASR segments\n")
+        return segs
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        diar_future: Future = pool.submit(_run_diarize)
+        asr_future: Future = pool.submit(_run_asr)
+
+        # Collect ASR result (required)
+        asr_segments = asr_future.result()
+
+        # Collect diarization result (optional — graceful fallback)
+        try:
+            diar_segments = diar_future.result()
+        except Exception as e:
+            sys.stderr.write(f"  Diarization skipped: {e}\n")
 
     # Step 3: Align ASR segments to speaker diarization
     aligned = align(asr_segments, diar_segments)
@@ -288,7 +305,7 @@ def _transcribe_mlx_whisper(
     """Transcribe with mlx-whisper (Apple Metal GPU accelerated)."""
     import mlx_whisper
 
-    model_id = os.environ.get("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
+    model_id = os.environ.get("WHISPER_MODEL", "mlx-community/distil-whisper-large-v3")
     sys.stderr.write(f"  engine=mlx-whisper model={model_id}\n")
 
     kwargs: dict = {"path_or_hf_repo": model_id, "word_timestamps": True}

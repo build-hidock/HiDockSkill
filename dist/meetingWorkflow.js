@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { truncateWords } from "./meetingStorage.js";
 import { LocalMeetingStorageAdapter } from "./notesStorage.js";
+import { streamLlmChat } from "./llmChat.js";
 import { HiDockWhisperSkill } from "./skill.js";
 import { formatSpeakerTranscript, transcribeAudio } from "./transcribe.js";
 const MONTH_NAME_TO_INDEX = {
@@ -299,58 +300,7 @@ function parseMeetingSummaryMarkdown(content) {
     }
     return { title, attendee, brief, summary };
 }
-async function streamLlmChat(host, body) {
-    // Detect API style from host URL
-    const isOllama = host.includes("11434");
-    const url = isOllama ? `${host}/api/chat` : `${host}/v1/chat/completions`;
-    const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            ...body,
-            stream: true,
-            temperature: 0.5,
-            top_p: 0.8,
-            ...(isOllama
-                ? { options: { num_predict: 4096, temperature: 0.5, top_p: 0.8 } }
-                : { max_tokens: 4096 }),
-        }),
-    });
-    if (!response.ok) {
-        throw new Error(`LLM server returned ${response.status}: ${await response.text()}`);
-    }
-    let content = "";
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done)
-            break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split("\n")) {
-            const trimmed = line.replace(/^data: /, "").trim();
-            if (!trimmed || trimmed === "[DONE]")
-                continue;
-            try {
-                const obj = JSON.parse(trimmed);
-                // Ollama format: { message: { content } }
-                const ollamaContent = obj.message?.content;
-                if (ollamaContent) {
-                    content += ollamaContent;
-                    continue;
-                }
-                // OpenAI format: { choices: [{ delta: { content } }] }
-                const choices = obj.choices;
-                if (choices?.[0]?.delta?.content)
-                    content += choices[0].delta.content;
-            }
-            catch {
-                // partial JSON line, ignore
-            }
-        }
-    }
-    return content;
-}
+// streamLlmChat is imported from ./llmChat.js
 export function stripThinkTags(text) {
     return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 }

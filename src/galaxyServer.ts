@@ -2,6 +2,9 @@ import http from "node:http";
 import { promises as fs } from "node:fs";
 import type { GalaxyGraphData } from "./galaxyData.js";
 import { renderGalaxyHtml } from "./galaxyHtml.js";
+import type { WikiSearchIndex, SearchResult } from "./wikiSearch.js";
+import { searchWiki } from "./wikiSearch.js";
+import { streamLlmChatChunked } from "./llmChat.js";
 
 export interface SyncProgressItem {
   fileName: string;
@@ -32,6 +35,7 @@ export interface GalaxyServerHandle {
   clearData: () => void;
   resetProgress: () => void;
   updateProgress: (progress: SyncProgress) => void;
+  updateWikiIndex: (index: WikiSearchIndex) => void;
 }
 
 const DEFAULT_PORT = 18180;
@@ -47,13 +51,16 @@ export function startGalaxyServer(
   // Mutable state: starts null (syncing) or with initial data (ready)
   let graphData: GalaxyGraphData | null = options.graphData ?? null;
   let syncProgress: SyncProgress = { phase: "connecting", total: 0, current: 0, items: [] };
+  let wikiIndex: WikiSearchIndex | null = null;
+  const llmHost = "http://localhost:8080";
+  const llmModel = "mlx-community/Qwen3.5-9B-4bit";
 
   return new Promise<GalaxyServerHandle>((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${host}:${port}`);
       const pathname = url.pathname;
 
-      if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
+      if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE" && req.method !== "POST") {
         res.writeHead(405, { "Content-Type": "text/plain" });
         res.end("Method Not Allowed");
         return;
@@ -107,15 +114,23 @@ export function startGalaxyServer(
       }
 
       if (pathname === "/") {
-        // Always start in polling mode so the browser never races with a
-        // fast sync that sets graphData before the page loads.
-        const html = renderGalaxyHtml(null);
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-cache",
+        // Read wiki index if available
+        const wikiIndexPromise = graphData?.nodes[0]
+          ? fs.readFile(
+              graphData.nodes[0].notePath.replace(/\/(meetings|whispers)\/.*$/, "/wiki/index.md"),
+              "utf8",
+            ).catch(() => undefined)
+          : Promise.resolve(undefined);
+
+        wikiIndexPromise.then((wikiContent) => {
+          const html = renderGalaxyHtml(graphData, wikiContent);
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache",
+          });
+          res.end(html);
+          log(`GET / -> 200 (${html.length} bytes)`);
         });
-        res.end(html);
-        log(`GET / -> 200 (${html.length} bytes)`);
         return;
       }
 
@@ -266,6 +281,139 @@ export function startGalaxyServer(
         return;
       }
 
+      // ---- Wiki endpoints ----
+
+      if (pathname === "/wiki/search") {
+        const q = url.searchParams.get("q") ?? "";
+        if (!wikiIndex || !q) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ results: [] }));
+          return;
+        }
+        const results = searchWiki(wikiIndex, q, 10);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ results }));
+        log(`GET /wiki/search?q=${q} -> ${results.length} results`);
+        return;
+      }
+
+      if (pathname === "/wiki/page") {
+        const wikiPath = url.searchParams.get("path");
+        if (!wikiPath || !graphData) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not Found");
+          return;
+        }
+        // Resolve wiki dir from any node's notePath
+        const anyNode = graphData.nodes[0];
+        const storageDir = anyNode
+          ? anyNode.notePath.replace(/\/(meetings|whispers)\/.*$/, "")
+          : "";
+        const fullPath = storageDir
+          ? `${storageDir}/wiki/${wikiPath}`
+          : "";
+        if (!fullPath) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not Found");
+          return;
+        }
+        fs.readFile(fullPath, "utf8")
+          .then((content) => {
+            const title = content.match(/^# (.+)/m)?.[1] ?? wikiPath;
+            const category = wikiPath.split("/")[0] ?? "";
+            res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ title, content, category }));
+            log(`GET /wiki/page -> 200 (${wikiPath})`);
+          })
+          .catch(() => {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not Found");
+          });
+        return;
+      }
+
+      // ---- AskHiDock endpoint (SSE) ----
+
+      if (req.method === "POST" && pathname === "/ask") {
+        let body = "";
+        req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        req.on("end", () => {
+          (async () => {
+            try {
+              const { query } = JSON.parse(body) as { query: string };
+              if (!query) {
+                res.writeHead(400, { "Content-Type": "text/plain" });
+                res.end("Missing query");
+                return;
+              }
+
+              // Search wiki for context
+              let sources: SearchResult[] = [];
+              if (wikiIndex) {
+                sources = searchWiki(wikiIndex, query, 5);
+              }
+
+              // Build context from top wiki pages
+              let wikiContext = "";
+              if (sources.length > 0 && graphData) {
+                const anyNode = graphData.nodes[0];
+                const storageDir = anyNode
+                  ? anyNode.notePath.replace(/\/(meetings|whispers)\/.*$/, "")
+                  : "";
+                for (const src of sources.slice(0, 3)) {
+                  try {
+                    const content = await fs.readFile(`${storageDir}/wiki/${src.path}`, "utf8");
+                    wikiContext += `\n## Source: ${src.path}\n${content.slice(0, 2000)}\n`;
+                  } catch { /* skip */ }
+                }
+              }
+
+              // SSE headers
+              res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+              });
+
+              // Send sources
+              res.write(`data: ${JSON.stringify({ type: "sources", results: sources })}\n\n`);
+
+              // Stream LLM answer
+              const systemPrompt =
+                "You are HiDock's AI assistant. Answer the user's question using ONLY the wiki context provided below. " +
+                "If the context doesn't contain enough information, say so honestly.\n" +
+                "For each claim, cite the source wiki page in brackets like [people/sarah-chen.md].\n\n" +
+                "Wiki Context:\n---" + wikiContext + "\n---";
+
+              await streamLlmChatChunked(
+                llmHost,
+                {
+                  model: llmModel,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: query + "\n\n/no_think" },
+                  ],
+                },
+                (chunk) => {
+                  res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+                },
+              );
+
+              res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+              res.end();
+              log(`POST /ask -> 200 (${query.slice(0, 40)})`);
+            } catch (error) {
+              if (!res.headersSent) {
+                res.writeHead(500, { "Content-Type": "text/plain" });
+              }
+              res.end("Error");
+              log(`POST /ask -> 500`);
+            }
+          })();
+        });
+        return;
+      }
+
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
       log(`GET ${pathname} -> 404`);
@@ -304,6 +452,10 @@ export function startGalaxyServer(
         },
         updateProgress: (progress: SyncProgress) => {
           syncProgress = progress;
+        },
+        updateWikiIndex: (index: WikiSearchIndex) => {
+          wikiIndex = index;
+          log(`Wiki search index updated: ${index.documents.length} documents`);
         },
       });
     });

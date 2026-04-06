@@ -27,11 +27,11 @@ export class HiDockWebUsbTransport {
             const t = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);
             p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
         });
-        await timeout(this.device.open(), 10_000, "device.open");
+        await timeout(this.device.open(), 5_000, "device.open");
         if (!this.device.configuration) {
-            await timeout(this.device.selectConfiguration(1), 10_000, "selectConfiguration");
+            await timeout(this.device.selectConfiguration(1), 5_000, "selectConfiguration");
         }
-        await timeout(this.device.claimInterface(this.interfaceNumber), 10_000, "claimInterface");
+        await timeout(this.device.claimInterface(this.interfaceNumber), 5_000, "claimInterface");
     }
     async close() {
         try {

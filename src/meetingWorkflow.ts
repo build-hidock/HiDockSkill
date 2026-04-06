@@ -4,6 +4,7 @@ import { HiDockClient } from "./client.js";
 import { HiDockFileEntry } from "./fileList.js";
 import { DocumentKind, SavedMeetingDocument, truncateWords } from "./meetingStorage.js";
 import { LocalMeetingStorageAdapter, NotesStorageAdapter } from "./notesStorage.js";
+import { streamLlmChat } from "./llmChat.js";
 import { HiDockSkillOptions, HiDockWhisperSkill } from "./skill.js";
 import { formatSpeakerTranscript, transcribeAudio } from "./transcribe.js";
 
@@ -401,57 +402,7 @@ function parseMeetingSummaryMarkdown(content: string): Partial<MeetingSummaryRes
   return { title, attendee, brief, summary };
 }
 
-async function streamLlmChat(
-  host: string,
-  body: { model: string; messages: { role: string; content: string }[] },
-): Promise<string> {
-  // Detect API style from host URL
-  const isOllama = host.includes("11434");
-  const url = isOllama ? `${host}/api/chat` : `${host}/v1/chat/completions`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...body,
-      stream: true,
-      temperature: 0.5,
-      top_p: 0.8,
-      ...(isOllama
-        ? { options: { num_predict: 4096, temperature: 0.5, top_p: 0.8 } }
-        : { max_tokens: 4096 }),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`LLM server returned ${response.status}: ${await response.text()}`);
-  }
-
-  let content = "";
-  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const text = decoder.decode(value, { stream: true });
-    for (const line of text.split("\n")) {
-      const trimmed = line.replace(/^data: /, "").trim();
-      if (!trimmed || trimmed === "[DONE]") continue;
-      try {
-        const obj = JSON.parse(trimmed) as Record<string, unknown>;
-        // Ollama format: { message: { content } }
-        const ollamaContent = (obj.message as { content?: string } | undefined)?.content;
-        if (ollamaContent) { content += ollamaContent; continue; }
-        // OpenAI format: { choices: [{ delta: { content } }] }
-        const choices = obj.choices as { delta?: { content?: string } }[] | undefined;
-        if (choices?.[0]?.delta?.content) content += choices[0].delta.content;
-      } catch {
-        // partial JSON line, ignore
-      }
-    }
-  }
-  return content;
-}
+// streamLlmChat is imported from ./llmChat.js
 
 export function stripThinkTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();

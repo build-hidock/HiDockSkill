@@ -32,9 +32,9 @@ export async function findHiDockNodeDevice(options = {}) {
     }
     throw new Error("No HiDock USB device found.");
 }
-const USB_CONNECT_TIMEOUT_MS = 10_000;
-const USB_CONNECT_RETRIES = 3;
-const USB_RETRY_DELAY_MS = 3_000;
+const USB_CONNECT_TIMEOUT_MS = 5_000;
+const USB_CONNECT_RETRIES = 5;
+const USB_RETRY_DELAY_MS = 2_000;
 function withUsbTimeout(promise, ms, label) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);

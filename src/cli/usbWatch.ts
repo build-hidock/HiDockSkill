@@ -13,6 +13,9 @@ import { parseArgs as parseMeetingsSyncArgs, runMeetingsSync, SyncProgressEvent 
 import { SyncStateStore, defaultSyncStatePath } from "../syncState.js";
 import { SyncCoordinator } from "../syncCoordinator.js";
 import { buildGalaxyData } from "../galaxyData.js";
+import { compileWiki } from "../wikiCompiler.js";
+import { buildSearchIndex } from "../wikiSearch.js";
+import path from "node:path";
 import { startGalaxyServer, GalaxyServerHandle, SyncProgress, SyncProgressItem } from "../galaxyServer.js";
 
 interface UsbWatchCliOptions {
@@ -33,7 +36,7 @@ const DEFAULT_INTERVAL_MS = 5000;
 const DEFAULT_FILE_POLL_MS = 15_000; // check for new recordings every 15s
 const DEFAULT_ACTIVE_WINDOW_MINUTES = 5;
 const DEFAULT_OPENCLAW_BIN = "openclaw";
-const DEFAULT_SYNC_DEBOUNCE_MS = 3000;
+const DEFAULT_SYNC_DEBOUNCE_MS = 1500;
 const execFileAsync = promisify(execFile);
 
 interface OpenClawExecResult {
@@ -108,36 +111,70 @@ async function main(): Promise<void> {
     }
   }
 
+  const AUTO_SYNC_RETRIES = 3;
+  const AUTO_SYNC_RETRY_DELAY_MS = 5_000;
+
   const runAutoSync = options.autoSync
     ? async () => {
       syncProgressItems.length = 0;
-      try {
-        const syncOptions = parseMeetingsSyncArgs([]);
-        const result = await runMeetingsSync({ options: syncOptions, logger: console, onProgress: handleSyncProgress });
-        const saved = result?.saved ?? 0;
-        const failed = result?.failed ?? 0;
-        if (saved > 0 || failed > 0) {
-          const parts: string[] = [];
-          if (saved > 0) parts.push(`${saved} synced`);
-          if (failed > 0) parts.push(`${failed} failed`);
-          log(`[sync] complete: ${parts.join(", ")}`);
-        } else {
-          log(`[sync] complete: all recordings up to date`);
-        }
-        // Push graph data to the already-running galaxy server
-        // The browser page transitions from syncing animation to galaxy view
-        await updateGalaxyWithData({
-          storageDir: syncOptions.storageDir,
-          newSources: result?.savedSources ?? [],
-          log,
-        });
-      } catch (error) {
-        log(`[sync] failed: ${toErrorMessage(error)}`);
-        // Even on failure, show whatever data we have
+      for (let attempt = 0; attempt < AUTO_SYNC_RETRIES; attempt++) {
         try {
           const syncOptions = parseMeetingsSyncArgs([]);
-          await updateGalaxyWithData({ storageDir: syncOptions.storageDir, newSources: [], log });
-        } catch { /* ignore */ }
+          const result = await runMeetingsSync({ options: syncOptions, logger: console, onProgress: handleSyncProgress });
+          const saved = result?.saved ?? 0;
+          const failed = result?.failed ?? 0;
+          if (saved > 0 || failed > 0) {
+            const parts: string[] = [];
+            if (saved > 0) parts.push(`${saved} synced`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            log(`[sync] complete: ${parts.join(", ")}`);
+          } else {
+            log(`[sync] complete: all recordings up to date`);
+          }
+          await updateGalaxyWithData({
+            storageDir: syncOptions.storageDir,
+            newSources: result?.savedSources ?? [],
+            log,
+          });
+
+          // Wiki compilation for newly synced notes
+          const savedSources = result?.savedSources ?? [];
+          if (savedSources.length > 0) {
+            try {
+              log(`[wiki] compiling ${savedSources.length} note(s)`);
+              const wikiResult = await compileWiki({
+                storageDir: syncOptions.storageDir,
+                llmHost: syncOptions.ollamaHost,
+                llmModel: syncOptions.summaryModel,
+                log: (msg) => log(`[wiki] ${msg}`),
+              }, savedSources);
+              log(`[wiki] done: ${wikiResult.pagesWritten} written, ${wikiResult.pagesUpdated} updated`);
+
+              // Rebuild search index
+              const wikiDir = path.join(syncOptions.storageDir, "wiki");
+              const searchIndex = await buildSearchIndex(wikiDir);
+              if (galaxyServerHandle) {
+                galaxyServerHandle.updateWikiIndex(searchIndex);
+              }
+            } catch (wikiError) {
+              log(`[wiki] compilation failed: ${toErrorMessage(wikiError)}`);
+            }
+          }
+
+          return; // success — exit retry loop
+        } catch (error) {
+          const msg = toErrorMessage(error);
+          if (attempt < AUTO_SYNC_RETRIES - 1 && detectHiDockPresence()) {
+            log(`[sync] failed (attempt ${attempt + 1}/${AUTO_SYNC_RETRIES}): ${msg} — retrying in ${AUTO_SYNC_RETRY_DELAY_MS / 1000}s`);
+            await new Promise((r) => setTimeout(r, AUTO_SYNC_RETRY_DELAY_MS));
+          } else {
+            log(`[sync] failed: ${msg}`);
+            try {
+              const syncOptions = parseMeetingsSyncArgs([]);
+              await updateGalaxyWithData({ storageDir: syncOptions.storageDir, newSources: [], log });
+            } catch { /* ignore */ }
+          }
+        }
       }
     }
     : undefined;
@@ -172,6 +209,45 @@ async function main(): Promise<void> {
     log,
   });
   monitor.start();
+
+  // Start galaxy server immediately with existing data (don't wait for device plug-in)
+  if (!galaxyServerHandle) {
+    (async () => {
+      try {
+        let initialData: import("../galaxyData.js").GalaxyGraphData | undefined;
+        try {
+          const syncOptions = parseMeetingsSyncArgs([]);
+          initialData = await buildGalaxyData({ storageDir: syncOptions.storageDir });
+          if (initialData.nodes.length === 0) initialData = undefined;
+        } catch { /* no existing data */ }
+
+        galaxyServerHandle = await startGalaxyServer({
+          port: DEFAULT_GALAXY_PORT,
+          ...(initialData ? { graphData: initialData } : {}),
+          log: (message) => log(`[galaxy] ${message}`),
+        });
+        if (initialData) {
+          log(`[galaxy] started with ${initialData.nodes.length} existing notes`);
+        }
+
+        // Pre-load wiki search index
+        try {
+          const syncOptions = parseMeetingsSyncArgs([]);
+          const wikiDir = path.join(syncOptions.storageDir, "wiki");
+          const wikiSearchIdx = await buildSearchIndex(wikiDir);
+          if (wikiSearchIdx.documents.length > 0) {
+            galaxyServerHandle.updateWikiIndex(wikiSearchIdx);
+            log(`[galaxy] wiki search index: ${wikiSearchIdx.documents.length} documents`);
+          }
+        } catch { /* no wiki yet */ }
+      } catch (error) {
+        const msg = toErrorMessage(error);
+        if (!msg.includes("EADDRINUSE")) {
+          log(`[galaxy] failed to start server: ${msg}`);
+        }
+      }
+    })();
+  }
 
   // Periodic file-list poll: detect new recordings on an already-connected device.
   // The USB monitor only fires on connect/disconnect transitions; this catches
@@ -573,17 +649,42 @@ let galaxyServerHandle: GalaxyServerHandle | null = null;
 async function openGalaxySyncing(log: (message: string) => void): Promise<void> {
   const galaxyUrl = `http://127.0.0.1:${DEFAULT_GALAXY_PORT}`;
 
-  // Clear any previous data so the browser shows the syncing overlay.
+  // If the server already has graph data, keep it — the browser will show
+  // existing notes immediately and the sync popup handles progress.
+  // Only show the syncing overlay on first launch (no data yet).
   if (galaxyServerHandle) {
-    galaxyServerHandle.clearData();
-    log(`[galaxy] server already running, cleared data for new sync`);
+    galaxyServerHandle.resetProgress();
+    log(`[galaxy] server already running, keeping existing data`);
   } else {
     try {
+      // Try to load existing notes so the browser shows them immediately
+      let initialData: import("../galaxyData.js").GalaxyGraphData | undefined;
+      try {
+        const syncOptions = parseMeetingsSyncArgs([]);
+        initialData = await buildGalaxyData({ storageDir: syncOptions.storageDir });
+        if (initialData.nodes.length > 0) {
+          log(`[galaxy] pre-loaded ${initialData.nodes.length} existing notes`);
+        } else {
+          initialData = undefined;
+        }
+      } catch { /* no existing data */ }
+
       galaxyServerHandle = await startGalaxyServer({
         port: DEFAULT_GALAXY_PORT,
-        // No graphData → server starts in syncing mode (returns 204 for /data.json)
+        ...(initialData ? { graphData: initialData } : {}),
         log: (message) => log(`[galaxy] ${message}`),
       });
+
+      // Pre-load wiki search index if wiki exists
+      try {
+        const syncOptions = parseMeetingsSyncArgs([]);
+        const wikiDir = path.join(syncOptions.storageDir, "wiki");
+        const wikiSearchIdx = await buildSearchIndex(wikiDir);
+        if (wikiSearchIdx.documents.length > 0) {
+          galaxyServerHandle.updateWikiIndex(wikiSearchIdx);
+          log(`[galaxy] pre-loaded wiki search index: ${wikiSearchIdx.documents.length} documents`);
+        }
+      } catch { /* no wiki yet */ }
 
       log(`[galaxy] syncing page at ${galaxyServerHandle.url}`);
     } catch (error) {

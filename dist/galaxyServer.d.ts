@@ -1,5 +1,6 @@
 import http from "node:http";
 import type { GalaxyGraphData } from "./galaxyData.js";
+import type { WikiSearchIndex } from "./wikiSearch.js";
 export interface SyncProgressItem {
     fileName: string;
     status: "pending" | "downloading" | "transcribing" | "summarizing" | "saved" | "skipped" | "failed";
@@ -26,6 +27,7 @@ export interface GalaxyServerHandle {
     clearData: () => void;
     resetProgress: () => void;
     updateProgress: (progress: SyncProgress) => void;
+    updateWikiIndex: (index: WikiSearchIndex) => void;
 }
 export declare function startGalaxyServer(options: GalaxyServerOptions): Promise<GalaxyServerHandle>;
 //# sourceMappingURL=galaxyServer.d.ts.map

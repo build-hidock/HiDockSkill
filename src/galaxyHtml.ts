@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { GalaxyGraphData } from "./galaxyData.js";
 
 /**
@@ -8,8 +10,55 @@ import type { GalaxyGraphData } from "./galaxyData.js";
  * When `data` is null, the page starts in syncing mode and polls /data.json
  * until data becomes available, then transitions to the galaxy view.
  */
-export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
+function renderWikiCategoriesHtml(indexContent: string): string {
+  const ICONS: Record<string, string> = { people: "&#x1f464;", projects: "&#x1f4cb;", topics: "&#x1f4d6;", decisions: "&#x2696;", actions: "&#x2705;" };
+  const categories = ["People", "Projects", "Topics", "Decisions", "Actions"];
+  let html = "";
+
+  for (const cat of categories) {
+    const catKey = cat.toLowerCase();
+    const icon = ICONS[catKey] ?? "";
+    const lines: string[] = [];
+    let inSection = false;
+    for (const line of indexContent.split("\n")) {
+      if (line.startsWith(`## ${cat}`)) { inSection = true; continue; }
+      if (line.startsWith("## ") && inSection) { inSection = false; continue; }
+      if (inSection && line.startsWith("- ")) lines.push(line);
+    }
+
+    html += `<div class="wiki-category-card">`;
+    html += `<div class="wiki-category-header">${icon} ${cat} <span class="wiki-category-count">(${lines.length})</span></div>`;
+    if (lines.length === 0) {
+      html += `<div style="font-size:12px;color:var(--text-dim);padding:4px 0;">No entries yet</div>`;
+    }
+    for (const line of lines) {
+      const lb = line.indexOf("[");
+      const rb = line.indexOf("]", lb);
+      const lp = line.indexOf("(", rb);
+      const rp = line.indexOf(")", lp);
+      if (lb >= 0 && rb > lb && lp > rb && rp > lp) {
+        const title = line.substring(lb + 1, rb);
+        const wikiPath = line.substring(lp + 1, rp);
+        const dashIdx = line.indexOf(" — ", rp);
+        const snippet = dashIdx >= 0 ? line.substring(dashIdx + 3) : "";
+        const safeTitle = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safeSnippet = snippet.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safePath = wikiPath.replace(/'/g, "");
+        html += `<div class="wiki-entry" onclick="openWikiPage('${safePath}')">`;
+        html += `<span class="wiki-entry-title">${safeTitle}</span>`;
+        if (snippet) html += `<span class="wiki-entry-snippet">${safeSnippet}</span>`;
+        html += `</div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?: string | undefined): string {
   const dataJson = data ? JSON.stringify(data) : "null";
+  const wikiCategoriesHtml = wikiIndexContent ? renderWikiCategoriesHtml(wikiIndexContent) : "";
+  const wikiJson = wikiIndexContent ? JSON.stringify(wikiIndexContent) : "null";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -105,6 +154,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     transition: opacity 0.6s ease, visibility 0.6s ease;
   }
   #syncing-overlay.hidden {
+    display: none !important;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -788,6 +838,208 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     padding: 8px 0;
   }
 
+  /* ---------- wiki view ---------- */
+  #wiki-view {
+    position: fixed;
+    top: 48px; left: 0; right: 560px; bottom: 0;
+    background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
+    overflow-y: auto;
+    display: none;
+    padding: 20px 32px;
+    z-index: 130;
+  }
+  #wiki-view::-webkit-scrollbar { width: 6px; }
+  #wiki-view::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.2); border-radius: 3px; }
+
+  .wiki-search {
+    max-width: 480px;
+    margin: 0 auto 24px;
+    display: flex;
+  }
+  .wiki-search input {
+    flex: 1;
+    background: rgba(168,85,247,0.06);
+    border: 1px solid rgba(168,85,247,0.2);
+    border-radius: 20px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    font-family: inherit;
+  }
+  .wiki-search input::placeholder { color: var(--text-dim); }
+  .wiki-search input:focus { border-color: rgba(168,85,247,0.4); }
+
+  .wiki-categories {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .wiki-category-card {
+    background: rgba(168,85,247,0.04);
+    border: 1px solid rgba(168,85,247,0.12);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .wiki-category-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--purple-light);
+    margin-bottom: 10px;
+    text-transform: capitalize;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .wiki-category-count {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .wiki-entry {
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .wiki-entry:hover { background: rgba(168,85,247,0.08); }
+  .wiki-entry-title {
+    font-size: 13px;
+    color: var(--text-primary);
+    flex: 1;
+  }
+  .wiki-entry-snippet {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
+  }
+  .wiki-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .wiki-src-link {
+    color: rgba(168,85,247,0.6);
+    font-size: 11px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .wiki-src-link:hover { color: var(--purple-light); text-decoration: underline; }
+
+  /* ---------- ask hidock ---------- */
+  #ask-hidock-bar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 480px;
+    max-width: 90vw;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: rgba(15,10,30,0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(168,85,247,0.25);
+    border-radius: 24px;
+    padding: 6px 6px 6px 18px;
+    z-index: 200;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  #ask-hidock-bar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    font-family: inherit;
+  }
+  #ask-hidock-bar input::placeholder { color: var(--text-dim); }
+  #ask-hidock-bar button {
+    background: rgba(168,85,247,0.2);
+    border: 1px solid rgba(168,85,247,0.3);
+    border-radius: 18px;
+    color: var(--purple-light);
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  #ask-hidock-bar button:hover {
+    background: rgba(168,85,247,0.3);
+  }
+
+  #ask-hidock-panel {
+    position: fixed;
+    top: 48px; right: 0;
+    width: 560px;
+    height: calc(100vh - 48px);
+    background: var(--panel-bg);
+    border-left: 1px solid rgba(168,85,247,0.15);
+    backdrop-filter: blur(12px);
+    padding: 20px 16px;
+    overflow-y: auto;
+    z-index: 160;
+    display: none;
+  }
+  .ask-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .ask-panel-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  #ask-query-display {
+    font-size: 14px;
+    color: var(--purple-lighter);
+    background: rgba(168,85,247,0.06);
+    border: 1px solid rgba(168,85,247,0.12);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+  }
+  #ask-sources {
+    margin-bottom: 16px;
+  }
+  .ask-source-item {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 3px 0;
+    cursor: pointer;
+  }
+  .ask-source-item:hover { color: var(--purple-lighter); }
+  #ask-answer {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+  }
+  #ask-answer p { margin: 8px 0; }
+  .ask-typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background: var(--purple-light);
+    animation: blink 0.8s infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
   /* ---------- view tabs ---------- */
   #view-tabs {
     position: fixed;
@@ -1065,6 +1317,12 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 <div id="view-tabs">
   <button class="view-tab active" data-view="galaxy" onclick="switchView('galaxy')">Galaxy</button>
   <button class="view-tab" data-view="list" onclick="switchView('list')">List</button>
+  <button class="view-tab" data-view="wiki" onclick="switchView('wiki')">Wiki</button>
+</div>
+
+<div id="wiki-view">
+  <div class="wiki-search"><input type="text" id="wiki-search-input" placeholder="Search wiki..." oninput="filterWiki(this.value)"></div>
+  <div id="wiki-categories" class="wiki-categories">${wikiCategoriesHtml || '<div class="wiki-empty">No wiki content yet. Sync some recordings to build the knowledge base.</div>'}</div>
 </div>
 
 <div id="list-view">
@@ -1126,6 +1384,21 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   </div>
 </div>
 
+<div id="ask-hidock-bar">
+  <input type="text" id="ask-input" placeholder="Ask HiDock anything..." onkeydown="if(event.key==='Enter')askHiDock()">
+  <button onclick="askHiDock()">Ask</button>
+</div>
+
+<div id="ask-hidock-panel">
+  <div class="ask-panel-header">
+    <h2>&#x2728; AskHiDock</h2>
+    <button class="modal-close" onclick="closeAskPanel()">&times;</button>
+  </div>
+  <div id="ask-query-display"></div>
+  <div id="ask-sources"></div>
+  <div id="ask-answer"></div>
+</div>
+
 <div id="delete-confirm-overlay">
   <div class="delete-confirm-box">
     <div class="delete-confirm-icon">&#x1f5d1;</div>
@@ -1167,7 +1440,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 
 <svg id="galaxy-svg" style="display:none;"></svg>
 
-<script>var GALAXY_DATA = ${dataJson};</script>
+<script>var GALAXY_DATA = ${dataJson}; var WIKI_INDEX = ${wikiJson};</script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 (function() {
@@ -1179,8 +1452,13 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
   var pollTimer = null;
 
   function boot() {
-    if (GALAXY_DATA) {
-      transitionToGalaxy(GALAXY_DATA);
+    if (GALAXY_DATA && GALAXY_DATA.nodes && GALAXY_DATA.nodes.length > 0) {
+      try {
+        transitionToGalaxy(GALAXY_DATA);
+      } catch (e) {
+        console.error("transitionToGalaxy failed:", e);
+        startPolling();
+      }
     } else {
       startPolling();
     }
@@ -1353,6 +1631,7 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     document.getElementById("legend").style.display = "block";
     document.getElementById("galaxy-svg").style.display = "block";
     document.getElementById("insights-panel").style.display = "block";
+    document.getElementById("ask-hidock-bar").style.display = "flex";
 
     // Populate insights
     renderInsights(data.insights);
@@ -1437,16 +1716,13 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
     var tabs = document.querySelectorAll(".view-tab");
     tabs.forEach(function(t) { t.classList.toggle("active", t.getAttribute("data-view") === view); });
 
-    if (view === "galaxy") {
-      document.getElementById("galaxy-svg").style.display = "block";
-      document.getElementById("legend").style.display = "block";
-      document.getElementById("list-view").style.display = "none";
-    } else {
-      document.getElementById("galaxy-svg").style.display = "none";
-      document.getElementById("legend").style.display = "none";
-      document.getElementById("list-view").style.display = "block";
-      renderListRows();
-    }
+    document.getElementById("galaxy-svg").style.display = view === "galaxy" ? "block" : "none";
+    document.getElementById("legend").style.display = view === "galaxy" ? "block" : "none";
+    document.getElementById("list-view").style.display = view === "list" ? "block" : "none";
+    document.getElementById("wiki-view").style.display = view === "wiki" ? "block" : "none";
+
+    if (view === "list") renderListRows();
+    if (view === "wiki") loadWikiData();
   };
 
   /* ====================================================================
@@ -1893,6 +2169,25 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
 
     window._openNoteModal = openNoteModal;
     function openNoteModal(d) {
+      // Mark as read — remove new-note styling
+      if (d.isNew) {
+        d.isNew = false;
+        // Update in GALAXY_DATA so re-renders keep it cleared
+        if (GALAXY_DATA) {
+          var gn = GALAXY_DATA.nodes.find(function(n) { return n.id === d.id; });
+          if (gn) gn.isNew = false;
+        }
+        // Remove visual highlight from galaxy node and list row
+        d3.selectAll(".node-new").each(function(nd) {
+          if (nd && nd.id === d.id) d3.select(this).classed("node-new", false);
+        });
+        var row = document.querySelector('tr.list-row-new[onclick*="' + d.id.replace(/'/g, "\\'") + '"]');
+        if (row) row.classList.remove("list-row-new");
+        // Update stats bar new count
+        var newCount = GALAXY_DATA ? GALAXY_DATA.nodes.filter(function(n) { return n.isNew; }).length : 0;
+        var newSpan = document.querySelector(".stat-new");
+        if (newSpan) newSpan.textContent = String(newCount);
+      }
       document.getElementById("nm-title").textContent = d.title;
       document.getElementById("nm-date").textContent = d.dateTime;
       document.getElementById("nm-kind").textContent = d.kind + " (" + (d.sourceType || "rec") + ")";
@@ -1954,8 +2249,9 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
           summaryEl.textContent = "(unable to load)";
         });
 
-      // Wire delete button
+      // Wire delete button (visible for notes, hidden for wiki pages)
       var deleteBtn = document.getElementById("nm-delete-btn");
+      deleteBtn.style.display = "";
       deleteBtn.onclick = function() { deleteNote(d); };
 
       // Show modal with animation
@@ -2038,9 +2334,193 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null): string {
       if (e.target === this) { closeNoteModal(); }
     });
 
+    // ---- Source linking ----
+    function linkifySources(html) {
+      // Replace [src: filename.md] with clickable links
+      return html.replace(/\\[src:\\s*([^\\]]+\\.md)\\]/g, function(match, filename) {
+        return '<a class="wiki-src-link" href="#" onclick="openNoteBySource(\\'' + escAttr(filename) + '\\');return false;">[' + escHtml(filename) + ']</a>';
+      });
+    }
+
+    window.openNoteBySource = function(filename) {
+      // Find the note in GALAXY_DATA by matching the notePath
+      if (!GALAXY_DATA) return;
+      var node = GALAXY_DATA.nodes.find(function(n) {
+        return n.notePath && n.notePath.endsWith("/" + filename);
+      });
+      if (node && window._openNoteModal) {
+        window._openNoteModal(node);
+      }
+    };
+
+    // ---- Wiki view ----
+    var WIKI_CATEGORY_ICONS = { people: "&#x1f464;", projects: "&#x1f4cb;", topics: "&#x1f4d6;", decisions: "&#x2696;", actions: "&#x2705;" };
+
+    function loadWikiData() {
+      // Wiki categories are pre-rendered server-side into the HTML.
+      // This function exists for refresh after new wiki compilation.
+      // Nothing to do on initial load.
+    }
+
+    function renderWikiFromIndex(indexContent) {
+      var categoriesEl = document.getElementById("wiki-categories");
+      var categories = ["People", "Projects", "Topics", "Decisions", "Actions"];
+      var html = "";
+
+      categories.forEach(function(cat) {
+        var catKey = cat.toLowerCase();
+        var icon = WIKI_CATEGORY_ICONS[catKey] || "";
+        // Line-based section parsing
+        var lines = [];
+        var inSection = false;
+        indexContent.split(String.fromCharCode(10)).forEach(function(line) {
+          if (line.indexOf("## " + cat) === 0) { inSection = true; return; }
+          if (line.indexOf("## ") === 0 && inSection) { inSection = false; return; }
+          if (inSection && line.indexOf("- ") === 0) lines.push(line);
+        });
+
+        html += '<div class="wiki-category-card">';
+        html += '<div class="wiki-category-header">' + icon + ' ' + cat + ' <span class="wiki-category-count">(' + lines.length + ')</span></div>';
+        if (lines.length === 0) {
+          html += '<div style="font-size:12px;color:var(--text-dim);padding:4px 0;">No entries yet</div>';
+        }
+        lines.forEach(function(line) {
+          // Parse: - [Title](category/file.md) — snippet
+          var lb = line.indexOf("[");
+          var rb = line.indexOf("]", lb);
+          var lp = line.indexOf("(", rb);
+          var rp = line.indexOf(")", lp);
+          if (lb >= 0 && rb > lb && lp > rb && rp > lp) {
+            var title = line.substring(lb + 1, rb);
+            var wikiPath = line.substring(lp + 1, rp);
+            var dashIdx = line.indexOf(" — ", rp);
+            var snippet = dashIdx >= 0 ? line.substring(dashIdx + 3) : "";
+            html += '<div class="wiki-entry" onclick="openWikiPage(' + "'" + wikiPath.replace(/'/g, "") + "'" + ')">';
+            html += '<span class="wiki-entry-title">' + escHtml(title) + '</span>';
+            if (snippet) html += '<span class="wiki-entry-snippet">' + escHtml(snippet) + '</span>';
+            html += '</div>';
+          }
+        });
+        html += '</div>';
+      });
+
+      categoriesEl.innerHTML = html || '<div class="wiki-empty">No wiki content yet.</div>';
+    }
+
+    window.openWikiPage = function(wikiPath) {
+      // Reuse note modal to show wiki page
+      fetch("/wiki/page?path=" + encodeURIComponent(wikiPath))
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+          if (!data) return;
+          document.getElementById("nm-title").textContent = data.title;
+          document.getElementById("nm-date").textContent = data.category;
+          document.getElementById("nm-kind").textContent = "wiki";
+          document.getElementById("nm-tier").innerHTML = '<span class="tier-badge hotmem">wiki</span>';
+          document.getElementById("nm-attendees-wrap").innerHTML = "";
+          document.getElementById("nm-summary").innerHTML = linkifySources(renderMarkdown(data.content));
+          document.getElementById("nm-transcript").textContent = "";
+          document.getElementById("nm-audio-player").innerHTML = "";
+          document.getElementById("nm-delete-btn").style.display = "none";
+          var overlay = document.getElementById("note-overlay");
+          overlay.style.display = "flex";
+          requestAnimationFrame(function() { requestAnimationFrame(function() { overlay.classList.add("open"); }); });
+        });
+    };
+
+    window.filterWiki = function(query) {
+      if (!query || query.length < 2) { loadWikiData(); return; }
+      fetch("/wiki/search?q=" + encodeURIComponent(query))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var categoriesEl = document.getElementById("wiki-categories");
+          if (!data.results || data.results.length === 0) {
+            categoriesEl.innerHTML = '<div class="wiki-empty">No results for "' + escHtml(query) + '"</div>';
+            return;
+          }
+          var html = '<div class="wiki-category-card" style="grid-column:1/-1;">';
+          html += '<div class="wiki-category-header">&#x1f50d; Search Results <span class="wiki-category-count">(' + data.results.length + ')</span></div>';
+          data.results.forEach(function(r) {
+            html += '<div class="wiki-entry" onclick="openWikiPage(' + "'" + r.path.replace(/'/g, "") + "'" + ')">';
+            html += '<span class="wiki-entry-title">' + escHtml(r.title) + '</span>';
+            html += '<span class="wiki-entry-snippet">' + escHtml(r.snippet.slice(0, 80)) + '</span>';
+            html += '</div>';
+          });
+          html += '</div>';
+          categoriesEl.innerHTML = html;
+        });
+    };
+
+    // ---- AskHiDock ----
+    window.askHiDock = function() {
+      var input = document.getElementById("ask-input");
+      var query = input.value.trim();
+      if (!query) return;
+
+      // Show ask panel, hide insights
+      document.getElementById("insights-panel").style.display = "none";
+      var panel = document.getElementById("ask-hidock-panel");
+      panel.style.display = "block";
+      document.getElementById("ask-query-display").textContent = query;
+      document.getElementById("ask-answer").innerHTML = '<span class="ask-typing-cursor"></span>';
+      document.getElementById("ask-sources").innerHTML = "";
+      input.value = "";
+
+      fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: query }),
+      }).then(function(res) {
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var answerText = "";
+        var answerEl = document.getElementById("ask-answer");
+        var sourcesEl = document.getElementById("ask-sources");
+
+        function readChunk() {
+          reader.read().then(function(result) {
+            if (result.done) {
+              answerEl.innerHTML = linkifySources(renderMarkdown(answerText));
+              return;
+            }
+            var text = decoder.decode(result.value, { stream: true });
+            text.split("\\n").forEach(function(line) {
+              if (!line.startsWith("data: ")) return;
+              var jsonStr = line.slice(6).trim();
+              if (!jsonStr) return;
+              try {
+                var evt = JSON.parse(jsonStr);
+                if (evt.type === "sources" && evt.results) {
+                  var shtml = '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Sources:</div>';
+                  evt.results.slice(0, 5).forEach(function(s) {
+                    shtml += '<div class="ask-source-item" onclick="openWikiPage(' + "'" + s.path.replace(/'/g, "") + "'" + ')">' + escHtml(s.title) + ' (' + s.category + ')</div>';
+                  });
+                  sourcesEl.innerHTML = shtml;
+                } else if (evt.type === "chunk") {
+                  answerText += evt.text;
+                  answerEl.innerHTML = linkifySources(renderMarkdown(answerText)) + '<span class="ask-typing-cursor"></span>';
+                } else if (evt.type === "done") {
+                  answerEl.innerHTML = linkifySources(renderMarkdown(answerText));
+                }
+              } catch(e) {}
+            });
+            readChunk();
+          });
+        }
+        readChunk();
+      }).catch(function() {
+        document.getElementById("ask-answer").textContent = "Failed to get answer. Is the LLM server running?";
+      });
+    };
+
+    window.closeAskPanel = function() {
+      document.getElementById("ask-hidock-panel").style.display = "none";
+      document.getElementById("insights-panel").style.display = "block";
+    };
+
     // Close on Escape key
     document.addEventListener("keydown", function(e) {
-      if (e.key === "Escape") { closeNoteModal(); }
+      if (e.key === "Escape") { closeNoteModal(); closeAskPanel(); }
     });
 
     // Force simulation
