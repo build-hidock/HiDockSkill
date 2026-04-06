@@ -299,10 +299,10 @@ export function startGalaxyServer(options) {
                                 const storageDir = anyNode
                                     ? anyNode.notePath.replace(/\/(meetings|whispers)\/.*$/, "")
                                     : "";
-                                for (const src of sources.slice(0, 3)) {
+                                for (const src of sources.slice(0, 2)) {
                                     try {
                                         const content = await fs.readFile(`${storageDir}/wiki/${src.path}`, "utf8");
-                                        wikiContext += `\n## Source: ${src.path}\n${content.slice(0, 2000)}\n`;
+                                        wikiContext += `\n## Source: ${src.path}\n${content.slice(0, 800)}\n`;
                                     }
                                     catch { /* skip */ }
                                 }
@@ -316,10 +316,8 @@ export function startGalaxyServer(options) {
                             // Send sources
                             res.write(`data: ${JSON.stringify({ type: "sources", results: sources })}\n\n`);
                             // Stream LLM answer
-                            const systemPrompt = "You are HiDock's AI assistant. Answer the user's question using ONLY the wiki context provided below. " +
-                                "If the context doesn't contain enough information, say so honestly.\n" +
-                                "For each claim, cite the source wiki page in brackets like [people/sarah-chen.md].\n\n" +
-                                "Wiki Context:\n---" + wikiContext + "\n---";
+                            const systemPrompt = "Answer using ONLY the context below. Cite sources in [brackets]. Be concise.\n\n" +
+                                "Context:" + wikiContext;
                             await streamLlmChatChunked(llmHost, {
                                 model: llmModel,
                                 messages: [
