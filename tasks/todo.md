@@ -61,11 +61,33 @@
 - [x] E2E perf on 5:07 audio: 14.8s wall (RTF ≈ 0.048, ~21x real-time) — matches asrbench Jetson numbers
 - [x] All 262 tests pass
 
+## Completed (2026-04-07 — afternoon)
+
+### USB Multi-Device Picker + Device-File List in UI
+- [x] Fix swapped product ID labels (P1 = 0xb00e, H1E = 0xb00d) in `nodeUsb.ts`
+- [x] Add error logging to file-poll catch block (was silently swallowing LIBUSB errors)
+- [x] New `enumerateHiDockBusDevices()` + `selectPreferredHiDock()` via `usb.getDeviceList()`
+      (no cache) with deterministic preference order (P1 → H1E → H1 → unknown)
+- [x] Env override `HIDOCK_PREFERRED_PRODUCT_ID` (decimal or hex) for explicit selection
+- [x] 10 new unit tests for the picker (mocked `usb.getDeviceList`)
+- [x] List view: device files with inline recorder badge (P1/H1E/H1) — design option B
+- [x] Pending rows: empty title/brief, italic gray styling, "Pending" type, raw filename hint
+- [x] `setDeviceFiles` server method: server enriches by matching `node.source === fileName`
+- [x] File-poll decoupled from `runAutoSync` — device-file enrichment runs independently
+- [x] Discovered + worked around production webusb hang via libusb device reset
+      (`resetDeviceBeforeClaim` in `nodeUsb.ts`) — was causing infinite hangs after
+      "Incomplete transfer" errors left H1E in a wedged kernel state
+- [x] All 272 tests pass; verified end-to-end on live H1E (27 files, 20 transcribed, 7 pending)
+
 ## Future Work
 - [ ] Speaker enrollment (interface designed in `SpeakerProfile`/`SpeakerEnrollmentConfig`).
       Plan documented in `tasks/speaker-enrollment-plan.md` — needs update for moonshine-default world.
 - [ ] Evaluate better model for structured output (qwen3.5:9b unreliable for format compliance)
-- [ ] Test with real HiDock device recordings via USB sync
 - [ ] Surface `detected_language` in Galaxy UI (small badge on the note modal)
 - [ ] Test multilingual Moonshine on a non-English recording (zh/ja/ko/etc.) — verify diarization
       works for non-English BASE models too
+- [ ] Multi-device sync UI: add an in-app device picker so the user can pick which HiDock
+      to sync from when multiple are connected (currently uses preference order or env var)
+- [ ] Investigate why "Incomplete transfer for command=0x5" happens on large files —
+      it's the upstream cause of the device wedging that the reset workaround papers over
+- [ ] Click-to-sync on pending device-file rows (currently no-op; future: enqueue manual sync)
