@@ -1,6 +1,6 @@
 import http from "node:http";
 import { promises as fs } from "node:fs";
-import type { GalaxyGraphData } from "./galaxyData.js";
+import type { GalaxyGraphData, DeviceFileEntry } from "./galaxyData.js";
 import { renderGalaxyHtml } from "./galaxyHtml.js";
 import type { WikiSearchIndex, SearchResult } from "./wikiSearch.js";
 import { searchWiki } from "./wikiSearch.js";
@@ -27,6 +27,18 @@ export interface GalaxyServerOptions {
   log?: (message: string) => void;
 }
 
+/**
+ * Raw entry pushed by the USB watcher's file-poll. The server enriches each
+ * entry by matching against current graphData.nodes (where node.source ===
+ * fileName) before storing in graphData.deviceFiles.
+ */
+export interface RawDeviceFileEntry {
+  fileName: string;
+  fileSize: number;
+  modifiedAt: string | null;
+  deviceName: string;
+}
+
 export interface GalaxyServerHandle {
   server: http.Server;
   url: string;
@@ -36,6 +48,7 @@ export interface GalaxyServerHandle {
   resetProgress: () => void;
   updateProgress: (progress: SyncProgress) => void;
   updateWikiIndex: (index: WikiSearchIndex) => void;
+  setDeviceFiles: (entries: RawDeviceFileEntry[]) => void;
 }
 
 const DEFAULT_PORT = 18180;
@@ -454,6 +467,41 @@ export function startGalaxyServer(
         updateWikiIndex: (index: WikiSearchIndex) => {
           wikiIndex = index;
           log(`Wiki search index updated: ${index.documents.length} documents`);
+        },
+        setDeviceFiles: (entries: RawDeviceFileEntry[]) => {
+          if (!graphData) {
+            // No graph data yet — nothing to enrich against. Stash for later by
+            // creating a minimal stub. The next updateData() will overwrite it.
+            return;
+          }
+          // Enrich each raw entry by matching against current nodes. The note's
+          // `source` field is the .hda filename, so direct equality works.
+          const nodesBySource = new Map(graphData.nodes.map((n) => [n.source, n]));
+          const enriched: DeviceFileEntry[] = entries.map((e) => {
+            const match = nodesBySource.get(e.fileName);
+            if (match) {
+              return {
+                fileName: e.fileName,
+                fileSize: e.fileSize,
+                modifiedAt: e.modifiedAt,
+                deviceName: e.deviceName,
+                isTranscribed: true,
+                noteId: match.id,
+                noteTitle: match.title,
+                noteBrief: match.brief,
+              };
+            }
+            return {
+              fileName: e.fileName,
+              fileSize: e.fileSize,
+              modifiedAt: e.modifiedAt,
+              deviceName: e.deviceName,
+              isTranscribed: false,
+            };
+          });
+          graphData.deviceFiles = enriched;
+          const pending = enriched.filter((d) => !d.isTranscribed).length;
+          log(`Device files updated: ${enriched.length} total, ${pending} pending`);
         },
       });
     });

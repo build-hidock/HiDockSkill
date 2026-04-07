@@ -273,6 +273,19 @@ async function main(): Promise<void> {
             const state = await stateStore.read();
             const newFiles = files.filter((f) => stateStore.shouldProcessFile(f, state));
 
+            // Push the device file list to the galaxy server so the list view
+            // can show pending recordings labeled with the recorder name.
+            if (galaxyServerHandle) {
+              const deviceName = detectHiDockPresence() ?? "Unknown HiDock";
+              const rawEntries = files.map((f) => ({
+                fileName: f.fileName,
+                fileSize: f.fileSize,
+                modifiedAt: parseHiDockFileNameToIso(f.fileName),
+                deviceName,
+              }));
+              galaxyServerHandle.setDeviceFiles(rawEntries);
+            }
+
             if (lastKnownFileCount < 0) {
               // First poll — just record baseline, don't trigger sync
               lastKnownFileCount = files.length;
@@ -830,6 +843,26 @@ function toErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+const HIDOCK_MONTHS: Record<string, number> = {
+  Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+  Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+};
+
+/**
+ * Parse a HiDock device filename to ISO 8601, e.g.
+ *   "2026Apr05-080746-Rec03.hda" -> "2026-04-05T08:07:46"
+ * Returns null if the name doesn't match the expected pattern.
+ */
+function parseHiDockFileNameToIso(fileName: string): string | null {
+  const match = /^(\d{4})([A-Z][a-z]{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(fileName);
+  if (!match) return null;
+  const [, yyyy, monthAbbr, dd, hh, mm, ss] = match;
+  const monthNum = HIDOCK_MONTHS[monthAbbr ?? ""];
+  if (!monthNum) return null;
+  const monthStr = monthNum < 10 ? `0${monthNum}` : `${monthNum}`;
+  return `${yyyy}-${monthStr}-${dd}T${hh}:${mm}:${ss}`;
 }
 
 function printHelp(): void {

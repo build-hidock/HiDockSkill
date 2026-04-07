@@ -34,11 +34,28 @@ export interface GalaxyInsights {
         count: number;
     }[];
 }
+/**
+ * A file currently present on a connected HiDock device, optionally enriched
+ * with the matching transcribed note when one exists. Populated by the watcher's
+ * file-poll loop and surfaced in the list view so the user can see all device
+ * recordings (transcribed and pending).
+ */
+export interface DeviceFileEntry {
+    fileName: string;
+    fileSize: number;
+    modifiedAt: string | null;
+    deviceName: string;
+    isTranscribed: boolean;
+    noteId?: string;
+    noteTitle?: string;
+    noteBrief?: string;
+}
 export interface GalaxyGraphData {
     nodes: GalaxyNode[];
     edges: GalaxyEdge[];
     insights: GalaxyInsights;
     generatedAt: string;
+    deviceFiles?: DeviceFileEntry[];
 }
 /** Extract a field value from a pipe-delimited index line. */
 export declare function extractField(line: string, fieldName: string): string;

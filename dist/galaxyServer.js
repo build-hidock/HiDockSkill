@@ -383,6 +383,41 @@ export function startGalaxyServer(options) {
                     wikiIndex = index;
                     log(`Wiki search index updated: ${index.documents.length} documents`);
                 },
+                setDeviceFiles: (entries) => {
+                    if (!graphData) {
+                        // No graph data yet — nothing to enrich against. Stash for later by
+                        // creating a minimal stub. The next updateData() will overwrite it.
+                        return;
+                    }
+                    // Enrich each raw entry by matching against current nodes. The note's
+                    // `source` field is the .hda filename, so direct equality works.
+                    const nodesBySource = new Map(graphData.nodes.map((n) => [n.source, n]));
+                    const enriched = entries.map((e) => {
+                        const match = nodesBySource.get(e.fileName);
+                        if (match) {
+                            return {
+                                fileName: e.fileName,
+                                fileSize: e.fileSize,
+                                modifiedAt: e.modifiedAt,
+                                deviceName: e.deviceName,
+                                isTranscribed: true,
+                                noteId: match.id,
+                                noteTitle: match.title,
+                                noteBrief: match.brief,
+                            };
+                        }
+                        return {
+                            fileName: e.fileName,
+                            fileSize: e.fileSize,
+                            modifiedAt: e.modifiedAt,
+                            deviceName: e.deviceName,
+                            isTranscribed: false,
+                        };
+                    });
+                    graphData.deviceFiles = enriched;
+                    const pending = enriched.filter((d) => !d.isTranscribed).length;
+                    log(`Device files updated: ${enriched.length} total, ${pending} pending`);
+                },
             });
         });
     });

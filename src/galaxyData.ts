@@ -43,11 +43,29 @@ export interface GalaxyInsights {
   topTopics: { topic: string; count: number }[];
 }
 
+/**
+ * A file currently present on a connected HiDock device, optionally enriched
+ * with the matching transcribed note when one exists. Populated by the watcher's
+ * file-poll loop and surfaced in the list view so the user can see all device
+ * recordings (transcribed and pending).
+ */
+export interface DeviceFileEntry {
+  fileName: string;            // raw .hda filename from device, e.g. "2026Apr05-080746-Rec03.hda"
+  fileSize: number;
+  modifiedAt: string | null;   // ISO 8601, derived from filename or null
+  deviceName: string;          // "HiDock_P1", "HiDock_H1E", etc. (from ioreg detection)
+  isTranscribed: boolean;
+  noteId?: string;             // GalaxyNode.id when matched
+  noteTitle?: string;
+  noteBrief?: string;
+}
+
 export interface GalaxyGraphData {
   nodes: GalaxyNode[];
   edges: GalaxyEdge[];
   insights: GalaxyInsights;
   generatedAt: string;
+  deviceFiles?: DeviceFileEntry[];
 }
 
 // ---------------------------------------------------------------------------

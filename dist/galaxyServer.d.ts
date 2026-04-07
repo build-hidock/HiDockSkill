@@ -19,6 +19,17 @@ export interface GalaxyServerOptions {
     graphData?: GalaxyGraphData;
     log?: (message: string) => void;
 }
+/**
+ * Raw entry pushed by the USB watcher's file-poll. The server enriches each
+ * entry by matching against current graphData.nodes (where node.source ===
+ * fileName) before storing in graphData.deviceFiles.
+ */
+export interface RawDeviceFileEntry {
+    fileName: string;
+    fileSize: number;
+    modifiedAt: string | null;
+    deviceName: string;
+}
 export interface GalaxyServerHandle {
     server: http.Server;
     url: string;
@@ -28,6 +39,7 @@ export interface GalaxyServerHandle {
     resetProgress: () => void;
     updateProgress: (progress: SyncProgress) => void;
     updateWikiIndex: (index: WikiSearchIndex) => void;
+    setDeviceFiles: (entries: RawDeviceFileEntry[]) => void;
 }
 export declare function startGalaxyServer(options: GalaxyServerOptions): Promise<GalaxyServerHandle>;
 //# sourceMappingURL=galaxyServer.d.ts.map

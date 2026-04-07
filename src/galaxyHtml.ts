@@ -1154,6 +1154,37 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
     0%, 100% { background: rgba(168,85,247,0.12); }
     50% { background: rgba(168,85,247,0.22); }
   }
+  /* Pending device file rows: untranscribed recordings still on the device */
+  .list-table tbody tr.list-row-pending td {
+    color: var(--text-dim);
+    font-style: italic;
+    cursor: default;
+  }
+  .list-table tbody tr.list-row-pending:hover {
+    background: rgba(168,85,247,0.04);
+  }
+  /* Inline recorder badge in the title cell, e.g. "P1", "H1E" */
+  .recorder-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #c084fc;
+    background: rgba(168,85,247,0.15);
+    border: 1px solid rgba(168,85,247,0.30);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 6px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-style: normal;
+  }
+  .pending-filename {
+    color: var(--text-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    font-style: normal;
+  }
   .list-table tbody td {
     padding: 10px 12px;
     font-size: 13px;
@@ -1734,7 +1765,62 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
 
   function buildListView(data) {
     listNodes = data.nodes.map(function(n) { return Object.assign({}, n); });
+
+    // Merge device file list (from watcher's file-poll) into the list view.
+    // Each device file is either:
+    //   (a) transcribed -> already a node; we just stamp recorderName onto it
+    //   (b) pending     -> add as a new "pending" row with empty title/brief
+    var deviceFiles = (data && data.deviceFiles) || [];
+    if (deviceFiles.length > 0) {
+      var byNoteId = {};
+      var byNoteSource = {};
+      var pendingFiles = [];
+      deviceFiles.forEach(function(df) {
+        if (df.isTranscribed && df.noteId) {
+          byNoteId[df.noteId] = df.deviceName;
+        } else if (!df.isTranscribed) {
+          pendingFiles.push(df);
+        }
+        // Also index by fileName for fallback matching against node.source
+        byNoteSource[df.fileName] = df.deviceName;
+      });
+
+      // Stamp recorderName onto matching nodes
+      listNodes.forEach(function(n) {
+        if (byNoteId[n.id]) {
+          n.recorderName = byNoteId[n.id];
+        } else if (n.source && byNoteSource[n.source]) {
+          n.recorderName = byNoteSource[n.source];
+        }
+      });
+
+      // Append pending rows (untranscribed device files)
+      pendingFiles.forEach(function(df) {
+        listNodes.push({
+          id: "devfile:" + df.fileName,
+          title: "",
+          brief: "",
+          dateTime: df.modifiedAt || "",
+          attendees: [],
+          tier: "",
+          sourceType: "pending",
+          recorderName: df.deviceName,
+          isPending: true,
+          fileName: df.fileName,
+        });
+      });
+    }
+
     listNodes.sort(function(a, b) { return (b.dateTime || "").localeCompare(a.dateTime || ""); });
+  }
+
+  // Strip "HiDock_" / "HiDock " prefix and return a short label, e.g.
+  // "HiDock_P1" -> "P1", "HiDock H1E" -> "H1E", "Unknown HiDock" -> "?"
+  function shortRecorderLabel(name) {
+    if (!name) return "";
+    var s = String(name).replace(/^HiDock[_\\s]?/i, "").trim();
+    if (!s || /unknown/i.test(name)) return "?";
+    return s;
   }
 
   function getFilteredNodes() {
@@ -1776,15 +1862,48 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
     }
     var html = "";
     nodes.forEach(function(n) {
+      var isPending = !!n.isPending;
       var srcColor = LIST_SRC_COLORS[n.sourceType] || LIST_SRC_COLORS.rec;
-      var srcLabel = SOURCE_TYPE_LABELS[n.sourceType] || "Meeting";
-      var attendeeStr = (n.attendees || []).join(", ") || "—";
+      var srcLabel = isPending
+        ? "Pending"
+        : (SOURCE_TYPE_LABELS[n.sourceType] || "Meeting");
+      var attendeeStr = (n.attendees || []).join(", ") || (isPending ? "" : "—");
       var dateStr = (n.dateTime || "").slice(0, 16).replace("T", " ");
-      html += '<tr class="' + (n.isNew ? 'list-row-new' : '') + '" onclick="listRowClick(\\'' + escAttr(n.id) + '\\')">';
+
+      // Inline recorder badge (P1 / H1E / H1) for any row whose underlying file
+      // came from a recognized HiDock device.
+      var recorderHtml = "";
+      if (n.recorderName) {
+        var label = shortRecorderLabel(n.recorderName);
+        recorderHtml = '<span class="recorder-badge" title="' + escAttr(n.recorderName) + '">' + escHtml(label) + '</span>';
+      }
+
+      // Pending rows: empty title/brief, italic gray styling, no click handler.
+      // Title cell still shows the raw filename as a hint after the badge.
+      var rowClasses = [];
+      if (n.isNew) rowClasses.push("list-row-new");
+      if (isPending) rowClasses.push("list-row-pending");
+      var classAttr = rowClasses.length > 0 ? ' class="' + rowClasses.join(" ") + '"' : "";
+      var clickAttr = isPending ? "" : ' onclick="listRowClick(\\'' + escAttr(n.id) + '\\')"';
+
+      var titleContent;
+      if (isPending) {
+        // Show filename as a faint hint so the user can identify the recording,
+        // but keep title and brief functionally empty per requirement.
+        titleContent = recorderHtml + '<span class="pending-filename">' + escHtml(n.fileName || "") + '</span>';
+      } else {
+        titleContent = '<span class="list-src-dot" style="background:' + srcColor + '"></span>' + recorderHtml + escHtml(n.title || "Untitled");
+      }
+
+      var tierCell = isPending
+        ? '<td class="list-tier-cell">—</td>'
+        : '<td class="list-tier-cell"><span class="tier-badge ' + n.tier + '">' + n.tier + '</span></td>';
+
+      html += '<tr' + classAttr + clickAttr + '>';
       html += '<td class="list-date-cell">' + escHtml(dateStr) + '</td>';
-      html += '<td><div class="list-title-cell"><span class="list-src-dot" style="background:' + srcColor + '"></span>' + escHtml(n.title || "Untitled") + '</div></td>';
+      html += '<td><div class="list-title-cell">' + titleContent + '</div></td>';
       html += '<td class="list-brief-cell" title="' + escAttr(n.brief || "") + '">' + escHtml(n.brief || "") + '</td>';
-      html += '<td class="list-tier-cell"><span class="tier-badge ' + n.tier + '">' + n.tier + '</span></td>';
+      html += tierCell;
       html += '<td class="list-attendee-cell" title="' + escAttr(attendeeStr) + '">' + escHtml(attendeeStr) + '</td>';
       html += '<td>' + escHtml(srcLabel) + '</td>';
       html += '</tr>';
