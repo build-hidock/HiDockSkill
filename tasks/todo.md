@@ -42,8 +42,30 @@
 - [x] jensen-Illya.mp3 — 96 segments, 2 speakers, LLM names (Ilya Sutskever, Jensen Huang)
 - [x] Galaxy dashboard renders both with audio sync, speaker labels, markdown summary
 
+## Completed (2026-04-07)
+
+### Speaker Color Differentiation
+- [x] 8-color palette (purple, cyan, amber, green, pink, blue, orange, lavender)
+- [x] Stable per-speaker assignment by first appearance, keyed on rendered name
+- [x] Same person across meetings → same color (palette is name-keyed)
+- [x] Verified on Galaxy dashboard with multi-speaker notes
+
+### ASR Switch: Whisper → Moonshine + Auto Language Detection
+- [x] Default `ASR_BACKEND` flipped to `moonshine` (was `dicow`); `dicow` retained as fallback
+- [x] Rewrote `scripts/moonshine_transcribe.py` with auto language detection via faster-whisper tiny
+- [x] **Pinned to BASE model** (was defaulting to MEDIUM_STREAMING) — 8.8x faster
+- [x] Per-language model selection — 8 languages supported (en, es, ar, ja, ko, vi, uk, zh)
+- [x] `LANGUAGE_HINT` env override skips LID for known-language batches
+- [x] Output JSON gains `detected_language` and `model_arch` fields
+- [x] **Diarization fully preserved** — 96 segments / 2 speakers on jensen-Illya (matches 2026-03-19 milestone)
+- [x] E2E perf on 5:07 audio: 14.8s wall (RTF ≈ 0.048, ~21x real-time) — matches asrbench Jetson numbers
+- [x] All 262 tests pass
+
 ## Future Work
-- [ ] Speaker enrollment with pyannote embeddings (interface designed in `SpeakerProfile`/`SpeakerEnrollmentConfig`)
+- [ ] Speaker enrollment (interface designed in `SpeakerProfile`/`SpeakerEnrollmentConfig`).
+      Plan documented in `tasks/speaker-enrollment-plan.md` — needs update for moonshine-default world.
 - [ ] Evaluate better model for structured output (qwen3.5:9b unreliable for format compliance)
 - [ ] Test with real HiDock device recordings via USB sync
-- [ ] Add speaker color differentiation (assign unique colors per speaker)
+- [ ] Surface `detected_language` in Galaxy UI (small badge on the note modal)
+- [ ] Test multilingual Moonshine on a non-English recording (zh/ja/ko/etc.) — verify diarization
+      works for non-English BASE models too

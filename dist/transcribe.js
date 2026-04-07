@@ -17,9 +17,11 @@ export async function transcribeAudio(input) {
             "-ar", "16000", "-ac", "1", "-f", "wav",
             wavPath,
         ]);
-        const scriptName = process.env.ASR_BACKEND === "moonshine"
-            ? "moonshine_transcribe.py"
-            : "dicow_transcribe.py";
+        // Default: Moonshine (per-language models, built-in diarization, ~13x smaller than Whisper).
+        // Set ASR_BACKEND=dicow for the Whisper + ECAPA fallback path (e.g. unsupported languages).
+        const scriptName = process.env.ASR_BACKEND === "dicow"
+            ? "dicow_transcribe.py"
+            : "moonshine_transcribe.py";
         const scriptPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "scripts", scriptName);
         const venvPython = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", ".venv", "bin", "python3");
         const pythonBin = input.pythonBin

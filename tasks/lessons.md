@@ -22,3 +22,9 @@
 - Preventative rule: LLM outputs from Qwen models leak special tokens (`<|endoftext|>`, `<|im_start|>user`). Always sanitize with a dedicated function that strips these artifacts — don't rely on `stripThinkTags` alone.
 - Preventative rule: Ollama `stream: false` mode can hang indefinitely on long prompts or thinking models. Always use `stream: true` with incremental reading to avoid header timeouts.
 - Preventative rule: Browser `<audio>` elements require HTTP Range request support (`Accept-Ranges: bytes`, 206 responses) for seeking. Without it, clicking the progress bar does nothing.
+
+## 2026-04-07
+- Preventative rule: When integrating a model loader from a third-party package (`get_model_for_X`), always inspect *which* model variant gets returned by default. `moonshine_voice.get_model_for_language("en")` defaulted to `MEDIUM_STREAMING` (live-latency tuned), not the `BASE` model the public benchmarks reported — running as default cost ~9× wall time for offline transcription. Pin the variant explicitly in code, never trust defaults for accuracy/perf-sensitive paths.
+- Preventative rule: Don't trust an external benchmark's model selection without verifying the runtime defaults. asrbench's "moonshine/base 2.55% WER" measured `BASE`, but the same package call in production code can return a different arch silently.
+- Preventative rule: HuggingFace-style auto-download paths can leave `.partial` files on network failure that block clean retry. When integrating any auto-downloader, surface partial-cleanup instructions in the user-facing error path.
+- Preventative rule: Don't conflate "embedding model" names — `moonshine_voice.get_embedding_model()` returns a *text* embedding (`embeddinggemma-300m`) for intent recognition, not a speaker embedding. Always confirm embedding modality (audio/text/image) before designing around it.
