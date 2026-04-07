@@ -41,9 +41,18 @@ export interface HiDockConnectionMonitor {
   pollNow(): Promise<void>;
 }
 
+// Product IDs verified against live ioreg readout 2026-04-07:
+//   P1:  productId 0xb00e (45070), serial "ACTIONS-BOS-002"
+//   H1E: productId 0xb00d (45069), serial "ACTIONS-BOS-001"
+//   H1:  productId 0xb00c (legacy data interface)
+// Prior code had labels swapped (0xb00d commented as "P1") which caused the
+// watcher to silently sync from the H1E instead of the P1 when both were on the bus.
+// Filter order matters: requestDevice() returns the first match per filter, so the
+// most specific / preferred device must come first.
 const DEFAULT_NODE_FILTERS: readonly HiDockUsbFilter[] = [
-  { vendorId: 0x10d6, productId: 0xb00c }, // HiDock H1 data interface
-  { vendorId: 0x10d6, productId: 0xb00d }, // HiDock P1
+  { vendorId: 0x10d6, productId: 0xb00e }, // HiDock P1   (preferred)
+  { vendorId: 0x10d6, productId: 0xb00d }, // HiDock H1E
+  { vendorId: 0x10d6, productId: 0xb00c }, // HiDock H1   (legacy data interface)
   { vendorId: 0x10d6 },                   // fallback for future product IDs
 ];
 const DEFAULT_MONITOR_INTERVAL_MS = 5000;

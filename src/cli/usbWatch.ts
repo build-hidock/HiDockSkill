@@ -284,8 +284,16 @@ async function main(): Promise<void> {
           } finally {
             await client.close();
           }
-        } catch {
-          // Device busy or not ready — skip this poll
+        } catch (error) {
+          // Device busy / not ready / libusb claim failure — log so the user can see
+          // why no auto-sync is happening. Common causes: LIBUSB_ERROR_BUSY (another
+          // process holding device), LIBUSB_ERROR_NO_DEVICE (multi-device confusion),
+          // LIBUSB_ERROR_ACCESS (permissions), or no HiDock currently enumerated.
+          const reason = toErrorMessage(error);
+          // Only log unexpected errors — silently skip when device is genuinely absent.
+          if (!reason.includes("No HiDock USB device found")) {
+            log(`[file-poll] skipped: ${reason}`);
+          }
         }
       })().finally(() => { filePollBusy = false; });
     }, DEFAULT_FILE_POLL_MS);
