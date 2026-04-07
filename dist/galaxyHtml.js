@@ -1185,6 +1185,31 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     font-size: 12px;
     font-style: normal;
   }
+  /* Inline per-row delete button — only visible on row hover. */
+  .list-row-delete {
+    background: transparent;
+    border: 1px solid rgba(239,68,68,0.30);
+    color: rgba(239,68,68,0.85);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    visibility: hidden;
+    transition: background 0.12s, color 0.12s;
+  }
+  .list-table tbody tr:hover .list-row-delete {
+    visibility: visible;
+  }
+  .list-row-delete:hover {
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+  }
+  .list-action-cell {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+  }
   .list-table tbody td {
     padding: 10px 12px;
     font-size: 13px;
@@ -1370,6 +1395,7 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         <th onclick="sortList('tier')">Tier <span class="sort-arrow" id="sort-tier"></span></th>
         <th onclick="sortList('attendees')">Attendees <span class="sort-arrow" id="sort-attendees"></span></th>
         <th onclick="sortList('sourceType')">Type <span class="sort-arrow" id="sort-sourceType"></span></th>
+        <th class="list-action-cell"></th>
       </tr>
     </thead>
     <tbody id="list-tbody"></tbody>
@@ -1668,11 +1694,54 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     // Populate insights
     renderInsights(data.insights);
 
-    // Build list view data
+    // Build list view data + immediately re-render rows so deletes and
+    // device-file refreshes are reflected without requiring a tab switch.
     buildListView(data);
+    renderListRows();
+
+    // Start the periodic /data.json poll so device-file updates from the
+    // watcher's file-poll loop appear automatically (recorder badges,
+    // pending rows). Idempotent.
+    startGalaxyDataPoll();
 
     // Render galaxy
     setTimeout(function() { renderGalaxy(data); }, 100);
+  }
+
+  // Periodic /data.json refresh while on the galaxy view. Used for keeping
+  // the list view's device files (recorder badges + pending rows) in sync
+  // with the watcher's file-poll loop. Only re-renders the list view — never
+  // touches the galaxy SVG, which is expensive.
+  var galaxyDataPollTimer = null;
+  function startGalaxyDataPoll() {
+    if (galaxyDataPollTimer) return;
+    galaxyDataPollTimer = setInterval(function() {
+      fetch("/data.json").then(function(r) {
+        return r.status === 200 ? r.json() : null;
+      }).then(function(data) {
+        if (!data || !data.nodes || !GALAXY_DATA) return;
+        // Cheap change detection: compare device-file count + first/last
+        // filename. Avoids rebuilding the list when nothing changed.
+        var oldDF = GALAXY_DATA.deviceFiles || [];
+        var newDF = data.deviceFiles || [];
+        var changed = oldDF.length !== newDF.length;
+        if (!changed && newDF.length > 0) {
+          if ((oldDF[0] && oldDF[0].fileName) !== (newDF[0] && newDF[0].fileName)) changed = true;
+          if (!changed && (oldDF[oldDF.length - 1] && oldDF[oldDF.length - 1].fileName) !== (newDF[newDF.length - 1] && newDF[newDF.length - 1].fileName)) changed = true;
+          // Also compare transcribed counts so edits flow through
+          if (!changed) {
+            var oldT = oldDF.filter(function(d) { return d.isTranscribed; }).length;
+            var newT = newDF.filter(function(d) { return d.isTranscribed; }).length;
+            if (oldT !== newT) changed = true;
+          }
+        }
+        if (changed) {
+          GALAXY_DATA.deviceFiles = newDF;
+          buildListView(GALAXY_DATA);
+          renderListRows();
+        }
+      }).catch(function() { /* swallow — retry next tick */ });
+    }, 10000); // 10s — slightly faster than the watcher's 15s file-poll cadence
   }
 
   /* ====================================================================
@@ -1857,7 +1926,7 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     var tbody = document.getElementById("list-tbody");
     var nodes = getFilteredNodes();
     if (nodes.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="list-empty">No matching notes</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="list-empty">No matching notes</td></tr>';
       return;
     }
     var html = "";
@@ -1899,6 +1968,18 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         ? '<td class="list-tier-cell">—</td>'
         : '<td class="list-tier-cell"><span class="tier-badge ' + n.tier + '">' + n.tier + '</span></td>';
 
+      // Action cell: delete button for transcribed rows only.
+      // Pending device-file rows have no note to delete (they are just file
+      // entries on the device), so the button is suppressed.
+      var actionCell;
+      if (isPending) {
+        actionCell = '<td class="list-action-cell"></td>';
+      } else {
+        actionCell = '<td class="list-action-cell">'
+          + '<button class="list-row-delete" onclick="event.stopPropagation(); listRowDelete(\\'' + escAttr(n.id) + '\\');" title="Delete this note">&#x1f5d1; Delete</button>'
+          + '</td>';
+      }
+
       html += '<tr' + classAttr + clickAttr + '>';
       html += '<td class="list-date-cell">' + escHtml(dateStr) + '</td>';
       html += '<td><div class="list-title-cell">' + titleContent + '</div></td>';
@@ -1906,6 +1987,7 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       html += tierCell;
       html += '<td class="list-attendee-cell" title="' + escAttr(attendeeStr) + '">' + escHtml(attendeeStr) + '</td>';
       html += '<td>' + escHtml(srcLabel) + '</td>';
+      html += actionCell;
       html += '</tr>';
     });
     tbody.innerHTML = html;
@@ -1938,6 +2020,16 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
   window.listRowClick = function(id) {
     var node = listNodes.find(function(n) { return n.id === id; });
     if (node && window._openNoteModal) window._openNoteModal(node);
+  };
+
+  // Per-row delete: reuses the existing deleteNote() confirmation flow.
+  // Only invoked for transcribed rows (the button is suppressed on pending
+  // device-file rows in renderListRows).
+  window.listRowDelete = function(id) {
+    var node = listNodes.find(function(n) { return n.id === id; });
+    if (node && window._deleteNote) {
+      window._deleteNote(node);
+    }
   };
 
   /* ====================================================================
@@ -2314,6 +2406,9 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     }
 
     window._openNoteModal = openNoteModal;
+    // Exposed so list view rows can trigger the same delete confirmation flow
+    // as the modal's delete button. Wired in renderListRows() per row.
+    window._deleteNote = function(d) { deleteNote(d); };
     function openNoteModal(d) {
       // Mark as read — remove new-note styling
       if (d.isNew) {
