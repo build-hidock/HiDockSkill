@@ -4,6 +4,21 @@
 
 > Your meetings stay on your machine. Always.
 
+> [!WARNING]
+> **Close any HiNotes web tabs before using HiDockSkill.**
+>
+> HiNotes Web (and any other browser tab using the WebUSB API to talk to your
+> HiDock) takes **exclusive control** of the device. While a HiNotes tab is
+> open in Chrome/Edge/Brave, HiDockSkill cannot claim the USB interface and
+> the watcher's auto-sync silently fails with `LIBUSB_ERROR_ACCESS`.
+>
+> **Symptom:** plug in your HiDock, no auto-sync runs, the dashboard's device
+> file list stays empty, and `usb-watch.log` shows repeated
+> `[file-poll] skipped: claimInterface error: Error: LIBUSB_ERROR_ACCESS`.
+>
+> **Fix:** close every browser tab on `hidock.com` / HiNotes Web, then unplug
+> and replug your HiDock (or wait ~15s for the next file-poll cycle).
+
 ## How It Works
 
 ```

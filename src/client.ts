@@ -140,7 +140,21 @@ export class HiDockClient {
         "Expected file size is unknown. Pass expectedSize or download from a listed file entry.",
       );
     }
-    const readLimit = options.readLimit ?? 4096;
+    // readLimit is the safety cap on collectCommandBytes' outer read loop —
+    // each iteration reads one batch of frames from the transport. Empirically
+    // each batch carries ~2-8 KB of file data, so the previous fixed cap of
+    // 4096 silently truncated downloads larger than ~8-32 MB (root cause of
+    // every "Incomplete transfer for command=0x5" we've seen on production
+    // syncs of meeting recordings >8 MB).
+    //
+    // New formula: scale with expectedSize, assuming a worst-case frame body
+    // of 256 bytes (very conservative — real frames are 8-30× larger). The
+    // 8192 floor preserves the original safety behavior for tiny files. The
+    // per-iteration read timeout in collectCommandBytes is the actual hang
+    // protection; this cap exists only to prevent infinite loops on weird
+    // device firmware that might stream zero-length packets indefinitely.
+    const readLimit =
+      options.readLimit ?? Math.max(8192, Math.ceil(expectedSize / 256));
 
     const messageId = this.nextMessageId();
     await this.transport.sendCommand(

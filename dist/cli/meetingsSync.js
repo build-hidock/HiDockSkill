@@ -141,8 +141,12 @@ export async function runMeetingsSync(input) {
                     }
                     catch (error) {
                         failed += 1;
-                        processedForState.push(capturedFile);
-                        await stateStore.markFileProcessed(capturedFile);
+                        // DO NOT mark failed files as processed — that causes them to be
+                        // permanently skipped on subsequent syncs (state.processedFiles
+                        // never expires). The 2026-03-12 lesson "save state incrementally
+                        // per item" applies to SUCCESSES only; failures must remain
+                        // un-marked so the next sync attempt retries them. The user's
+                        // today recording was lost to this bug for hours.
                         logger.error(`${capturedTag} failed:`, error);
                         onProgress({ phase: "processing", total: selected.length, current: capturedIndex + 1, fileName: capturedFile.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
                     }
@@ -150,8 +154,7 @@ export async function runMeetingsSync(input) {
             }
             catch (error) {
                 failed += 1;
-                processedForState.push(file);
-                await stateStore.markFileProcessed(file);
+                // Same as inner catch: failures must NOT be marked processed.
                 logger.error(`${tag} failed:`, error);
                 onProgress({ phase: "processing", total: selected.length, current: index + 1, fileName: file.fileName, status: "failed", progressPercent: 100, error: String(error instanceof Error ? error.message : error) });
             }
