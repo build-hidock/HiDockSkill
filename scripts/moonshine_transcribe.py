@@ -136,12 +136,30 @@ def main() -> None:
     from moonshine_voice import get_model_for_language, load_wav_file, ModelArch  # type: ignore[import-untyped]
     from moonshine_voice.transcriber import Transcriber  # type: ignore[import-untyped]
 
-    # Pin to BASE (non-streaming) — moonshine_voice defaults English to MEDIUM_STREAMING
-    # which is tuned for low-latency live transcription, not offline accuracy. BASE is
-    # what asrbench measured at 2.55% EN WER. For non-English, BASE is the only variant
-    # shipped, so the same call works uniformly.
-    sys.stderr.write(f"  Loading Moonshine BASE model for '{target_lang}'...\n")
-    model_path, model_arch = get_model_for_language(target_lang, ModelArch.BASE)
+    # Select the best non-streaming arch for this language. moonshine_voice defaults
+    # English to MEDIUM_STREAMING (live-latency tuned, ~9× slower for offline use), so
+    # we never want the auto-pick. Per-language availability (verified 2026-04-07):
+    #   en: BASE + streaming variants  (prefer BASE)
+    #   es/ar/vi/uk/zh: BASE only
+    #   ja: BASE + TINY
+    #   ko: TINY only (file is named "base-ko" but enum is TINY — moonshine naming quirk)
+    # Strategy: try BASE → fall back to TINY → never use any *_STREAMING variant.
+    chosen_arch = None
+    for arch in (ModelArch.BASE, ModelArch.TINY):
+        try:
+            model_path, model_arch = get_model_for_language(target_lang, arch)
+            chosen_arch = arch
+            break
+        except ValueError:
+            continue
+    if chosen_arch is None:
+        raise RuntimeError(
+            f"No non-streaming Moonshine model available for language '{target_lang}'. "
+            f"Streaming variants are not used for offline transcription."
+        )
+    sys.stderr.write(
+        f"  Loading Moonshine {chosen_arch.name} model for '{target_lang}'...\n"
+    )
     transcriber = Transcriber(model_path, model_arch)
     try:
         sys.stderr.write("  Transcribing...\n")
