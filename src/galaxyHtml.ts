@@ -729,15 +729,16 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
   .transcript-time:hover { opacity: 1; color: #a855f7; }
   .speaker-label {
     display: inline-block;
-    color: #c084fc;
     font-weight: 600;
-    background: rgba(168,85,247,0.12);
-    border: 1px solid rgba(168,85,247,0.22);
     border-radius: 6px;
     padding: 1px 8px;
     margin-right: 6px;
     font-size: 12px;
     letter-spacing: 0.3px;
+    /* default (used when no per-speaker color is assigned) */
+    color: #c084fc;
+    background: rgba(168,85,247,0.12);
+    border: 1px solid rgba(168,85,247,0.22);
   }
   .note-loading-text {
     color: var(--text-dim);
@@ -2078,6 +2079,24 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
       return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
+    // Distinct, dark-theme-friendly speaker palette (HSL hues spaced ~45°).
+    // Each entry: [text color, background rgba, border rgba].
+    var SPEAKER_PALETTE = [
+      ["#c084fc", "rgba(168,85,247,0.14)", "rgba(168,85,247,0.30)"], // purple
+      ["#67e8f9", "rgba(34,211,238,0.14)",  "rgba(34,211,238,0.30)"],  // cyan
+      ["#fcd34d", "rgba(251,191,36,0.14)",  "rgba(251,191,36,0.30)"],  // amber
+      ["#86efac", "rgba(34,197,94,0.14)",   "rgba(34,197,94,0.30)"],   // green
+      ["#fda4af", "rgba(244,114,182,0.14)", "rgba(244,114,182,0.30)"], // pink
+      ["#93c5fd", "rgba(59,130,246,0.14)",  "rgba(59,130,246,0.30)"],  // blue
+      ["#fdba74", "rgba(249,115,22,0.14)",  "rgba(249,115,22,0.30)"],  // orange
+      ["#d8b4fe", "rgba(192,132,252,0.14)", "rgba(192,132,252,0.30)"]  // lavender
+    ];
+
+    function speakerStyle(idx) {
+      var p = SPEAKER_PALETTE[idx % SPEAKER_PALETTE.length];
+      return "color:" + p[0] + ";background:" + p[1] + ";border:1px solid " + p[2] + ";";
+    }
+
     function formatTranscriptHtml(transcript) {
       if (!transcript) return "";
       var lines = transcript.split("\\n");
@@ -2085,18 +2104,26 @@ export function renderGalaxyHtml(data: GalaxyGraphData | null, wikiIndexContent?
       var speakerTimePattern = /^\\[([^\\]@]+?)(?:\\s+@([\\d.]+))?\\]:\\s*/;
       var hasSpeakers = lines.some(function(l) { return speakerTimePattern.test(l); });
       if (!hasSpeakers) return '<div class="transcript-line">' + escapeHtml(transcript) + '</div>';
+      // Stable palette index per distinct speaker (first appearance = 0, next new = 1, ...)
+      var speakerIndex = {};
+      var nextIdx = 0;
       return lines.map(function(line) {
         var m = speakerTimePattern.exec(line);
         if (m) {
-          var name = escapeHtml(m[1].trim());
+          var rawName = m[1].trim();
+          if (!(rawName in speakerIndex)) {
+            speakerIndex[rawName] = nextIdx++;
+          }
+          var name = escapeHtml(rawName);
           var startSec = m[2] ? parseFloat(m[2]) : -1;
           var text = escapeHtml(line.slice(m[0].length));
           var timeHtml = startSec >= 0
             ? '<span class="transcript-time" data-seek="' + startSec + '">' + fmtTime(startSec) + '</span>'
             : '';
+          var style = speakerStyle(speakerIndex[rawName]);
           return '<div class="transcript-line" data-start="' + startSec + '">'
             + timeHtml
-            + '<span class="speaker-label">' + name + '</span>'
+            + '<span class="speaker-label" style="' + style + '">' + name + '</span>'
             + text + '</div>';
         }
         if (line.trim() === "") return "";
