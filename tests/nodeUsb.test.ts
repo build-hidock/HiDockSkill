@@ -2,9 +2,45 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHiDockConnectionMonitor,
+  enumerateHiDockBusDevices,
   formatHiDockPluggedInPrompt,
+  selectPreferredHiDock,
 } from "../src/nodeUsb.js";
+import type { HiDockBusDevice } from "../src/nodeUsb.js";
 import { UsbDeviceLike } from "../src/transport.js";
+
+// ---------------------------------------------------------------------------
+// Mock the underlying `usb` package's getDeviceList so we can simulate any
+// HiDock combination on the bus without needing real hardware.
+// ---------------------------------------------------------------------------
+vi.mock("usb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("usb")>();
+  return {
+    ...actual,
+    getDeviceList: () => mockedDeviceList,
+  };
+});
+
+interface MockNativeDevice {
+  busNumber: number;
+  deviceAddress: number;
+  deviceDescriptor: { idVendor: number; idProduct: number };
+}
+
+let mockedDeviceList: MockNativeDevice[] = [];
+
+function mkDevice(
+  vendorId: number,
+  productId: number,
+  busNumber = 1,
+  deviceAddress = 1,
+): MockNativeDevice {
+  return {
+    busNumber,
+    deviceAddress,
+    deviceDescriptor: { idVendor: vendorId, idProduct: productId },
+  };
+}
 
 describe("HiDock USB connection monitor", () => {
   afterEach(() => {
@@ -159,6 +195,114 @@ describe("HiDock USB connection monitor", () => {
     const prompt = formatHiDockPluggedInPrompt("");
     expect(prompt).toContain("HiDock Unknown Device plugged in, auto sync your latest recordings now...");
     expect(prompt).toMatch(/^=+\n\| /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-device picker tests — verify that enumeration filters out non-HiDock
+// vendors and that selection honors product preference order + env override.
+// ---------------------------------------------------------------------------
+describe("HiDock multi-device picker", () => {
+  afterEach(() => {
+    mockedDeviceList = [];
+  });
+
+  it("enumerateHiDockBusDevices excludes non-HiDock vendors", () => {
+    mockedDeviceList = [
+      mkDevice(0x05ac, 0x1234), // Apple
+      mkDevice(0x10d6, 0xb00e), // P1
+      mkDevice(0x1395, 0x005c), // oddball "HiDock H1E" with wrong vendor
+    ];
+
+    const found = enumerateHiDockBusDevices();
+    expect(found).toHaveLength(1);
+    expect(found[0]?.shortLabel).toBe("P1");
+    expect(found[0]?.productId).toBe(0xb00e);
+  });
+
+  it("enumerateHiDockBusDevices sorts by preference (P1 before H1E before H1)", () => {
+    mockedDeviceList = [
+      mkDevice(0x10d6, 0xb00d, 1, 5), // H1E
+      mkDevice(0x10d6, 0xb00c, 1, 3), // H1
+      mkDevice(0x10d6, 0xb00e, 1, 9), // P1
+    ];
+
+    const found = enumerateHiDockBusDevices();
+    expect(found.map((d) => d.shortLabel)).toEqual(["P1", "H1E", "H1"]);
+  });
+
+  it("enumerateHiDockBusDevices labels unknown product IDs as vendor:product hex", () => {
+    mockedDeviceList = [mkDevice(0x10d6, 0xb0ff)];
+
+    const found = enumerateHiDockBusDevices();
+    expect(found).toHaveLength(1);
+    expect(found[0]?.shortLabel).toBe("0x10d6:0xb0ff");
+    expect(found[0]?.preferenceRank).toBe(999);
+  });
+
+  it("selectPreferredHiDock returns null when no HiDock devices present", () => {
+    mockedDeviceList = [mkDevice(0x05ac, 0x1234)];
+    expect(selectPreferredHiDock()).toBeNull();
+  });
+
+  it("selectPreferredHiDock prefers P1 when both P1 and H1E are connected", () => {
+    mockedDeviceList = [
+      mkDevice(0x10d6, 0xb00d), // H1E
+      mkDevice(0x10d6, 0xb00e), // P1
+    ];
+
+    const picked = selectPreferredHiDock();
+    expect(picked?.shortLabel).toBe("P1");
+  });
+
+  it("selectPreferredHiDock honors env override (hex)", () => {
+    mockedDeviceList = [
+      mkDevice(0x10d6, 0xb00d), // H1E
+      mkDevice(0x10d6, 0xb00e), // P1
+    ];
+
+    const picked = selectPreferredHiDock("0xb00d");
+    expect(picked?.shortLabel).toBe("H1E");
+  });
+
+  it("selectPreferredHiDock honors env override (decimal)", () => {
+    mockedDeviceList = [
+      mkDevice(0x10d6, 0xb00d), // H1E
+      mkDevice(0x10d6, 0xb00e), // P1
+    ];
+
+    const picked = selectPreferredHiDock("45070"); // 0xb00e
+    expect(picked?.shortLabel).toBe("P1");
+  });
+
+  it("selectPreferredHiDock falls back to preference order when env override doesn't match", () => {
+    mockedDeviceList = [
+      mkDevice(0x10d6, 0xb00d), // H1E
+      mkDevice(0x10d6, 0xb00e), // P1
+    ];
+
+    // Override requests a productId that isn't connected
+    const picked = selectPreferredHiDock("0xdead");
+    expect(picked?.shortLabel).toBe("P1"); // falls back to preference order
+  });
+
+  it("selectPreferredHiDock ignores invalid env override strings", () => {
+    mockedDeviceList = [mkDevice(0x10d6, 0xb00e)];
+
+    const picked = selectPreferredHiDock("not-a-number");
+    expect(picked?.shortLabel).toBe("P1");
+  });
+
+  it("HiDockBusDevice type carries the labeled metadata", () => {
+    mockedDeviceList = [mkDevice(0x10d6, 0xb00e, 2, 7)];
+
+    const found = enumerateHiDockBusDevices();
+    const dev: HiDockBusDevice | undefined = found[0];
+    expect(dev?.vendorId).toBe(0x10d6);
+    expect(dev?.productId).toBe(0xb00e);
+    expect(dev?.busNumber).toBe(2);
+    expect(dev?.deviceAddress).toBe(7);
+    expect(dev?.preferenceRank).toBe(0);
   });
 });
 
