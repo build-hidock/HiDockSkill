@@ -249,43 +249,48 @@ async function main(): Promise<void> {
     })();
   }
 
-  // Periodic file-list poll: detect new recordings on an already-connected device.
+  // Periodic file-list poll: lists files on the connected device every 15s for
+  // two purposes (independent — both run regardless of --no-auto-sync):
+  //   1. Push the file list to the galaxy server so the list view can show
+  //      pending recordings labeled with the recorder name (P1/H1E/H1).
+  //   2. If autoSync is enabled, trigger a sync when new files appear since
+  //      the last baseline.
   // The USB monitor only fires on connect/disconnect transitions; this catches
   // recordings made while the device stays plugged in.
   let filePollTimer: NodeJS.Timeout | null = null;
   let filePollBusy = false;
-  if (runAutoSync) {
-    const syncOptions = parseMeetingsSyncArgs([]);
-    const stateStore = new SyncStateStore(syncOptions.stateFile);
-    let lastKnownFileCount = -1;
+  const syncOptions = parseMeetingsSyncArgs([]);
+  const stateStore = new SyncStateStore(syncOptions.stateFile);
+  let lastKnownFileCount = -1;
 
-    filePollTimer = setInterval(() => {
-      if (filePollBusy) return;
-      if (syncCoordinator.isBusy()) return; // sync in progress — skip poll
-      if (!detectHiDockPresence()) return; // device not connected
+  filePollTimer = setInterval(() => {
+    if (filePollBusy) return;
+    if (syncCoordinator.isBusy()) return; // sync in progress — skip poll
+    if (!detectHiDockPresence()) return; // device not connected
 
-      filePollBusy = true;
-      (async () => {
+    filePollBusy = true;
+    (async () => {
+      try {
+        const client = await createNodeHiDockClient();
         try {
-          const client = await createNodeHiDockClient();
-          try {
-            const { files } = await client.withConnection(() => client.listFiles());
-            const state = await stateStore.read();
-            const newFiles = files.filter((f) => stateStore.shouldProcessFile(f, state));
+          const { files } = await client.withConnection(() => client.listFiles());
+          const state = await stateStore.read();
+          const newFiles = files.filter((f) => stateStore.shouldProcessFile(f, state));
 
-            // Push the device file list to the galaxy server so the list view
-            // can show pending recordings labeled with the recorder name.
-            if (galaxyServerHandle) {
-              const deviceName = detectHiDockPresence() ?? "Unknown HiDock";
-              const rawEntries = files.map((f) => ({
-                fileName: f.fileName,
-                fileSize: f.fileSize,
-                modifiedAt: parseHiDockFileNameToIso(f.fileName),
-                deviceName,
-              }));
-              galaxyServerHandle.setDeviceFiles(rawEntries);
-            }
+          // Push the device file list to the galaxy server so the list view
+          // can show pending recordings labeled with the recorder name.
+          if (galaxyServerHandle) {
+            const deviceName = detectHiDockPresence() ?? "Unknown HiDock";
+            const rawEntries = files.map((f) => ({
+              fileName: f.fileName,
+              fileSize: f.fileSize,
+              modifiedAt: parseHiDockFileNameToIso(f.fileName),
+              deviceName,
+            }));
+            galaxyServerHandle.setDeviceFiles(rawEntries);
+          }
 
+          if (runAutoSync) {
             if (lastKnownFileCount < 0) {
               // First poll — just record baseline, don't trigger sync
               lastKnownFileCount = files.length;
@@ -294,23 +299,23 @@ async function main(): Promise<void> {
               lastKnownFileCount = files.length;
               syncCoordinator.trigger(runAutoSync);
             }
-          } finally {
-            await client.close();
           }
-        } catch (error) {
-          // Device busy / not ready / libusb claim failure — log so the user can see
-          // why no auto-sync is happening. Common causes: LIBUSB_ERROR_BUSY (another
-          // process holding device), LIBUSB_ERROR_NO_DEVICE (multi-device confusion),
-          // LIBUSB_ERROR_ACCESS (permissions), or no HiDock currently enumerated.
-          const reason = toErrorMessage(error);
-          // Only log unexpected errors — silently skip when device is genuinely absent.
-          if (!reason.includes("No HiDock USB device found")) {
-            log(`[file-poll] skipped: ${reason}`);
-          }
+        } finally {
+          await client.close();
         }
-      })().finally(() => { filePollBusy = false; });
-    }, DEFAULT_FILE_POLL_MS);
-  }
+      } catch (error) {
+        // Device busy / not ready / libusb claim failure — log so the user can see
+        // why no auto-sync is happening. Common causes: LIBUSB_ERROR_BUSY (another
+        // process holding device), LIBUSB_ERROR_NO_DEVICE (multi-device confusion),
+        // LIBUSB_ERROR_ACCESS (permissions), or no HiDock currently enumerated.
+        const reason = toErrorMessage(error);
+        // Only log unexpected errors — silently skip when device is genuinely absent.
+        if (!reason.includes("No HiDock USB device found")) {
+          log(`[file-poll] skipped: ${reason}`);
+        }
+      }
+    })().finally(() => { filePollBusy = false; });
+  }, DEFAULT_FILE_POLL_MS);
 
   const shutdown = (signal: string): void => {
     console.log(`[HiDock USB Watch] stopping (${signal})`);

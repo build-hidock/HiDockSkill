@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { platform } from "node:os";
 
-import { WebUSB, getDeviceList } from "usb";
+import { WebUSB, getDeviceList, findByIds } from "usb";
 
 import { HiDockClient } from "./client.js";
 import { HiDockTransportOptions, UsbDeviceLike } from "./transport.js";
@@ -174,6 +174,51 @@ export function selectPreferredHiDock(
   return all[0] ?? null;
 }
 
+/**
+ * Force a libusb-level device reset before claiming. The HiDock H1E in
+ * particular gets into a state where webusb.open() hangs forever after
+ * a stalled USB transfer (observed in production 2026-04-07 after the
+ * morning sync's "Incomplete transfer" error left the device wedged).
+ * A low-level reset clears the kernel/driver state in ~100ms, after
+ * which webusb.open() succeeds normally.
+ *
+ * Must be awaited before passing the device to webusb — racing the
+ * reset against the webusb claim crashes the libusb context (SIGSEGV).
+ * This is a no-op if the reset fails (e.g. permission denied).
+ */
+async function resetDeviceBeforeClaim(vendorId: number, productId: number): Promise<void> {
+  let nativeDevice: ReturnType<typeof findByIds> | undefined;
+  try {
+    nativeDevice = findByIds(vendorId, productId);
+    if (!nativeDevice) return;
+    nativeDevice.open();
+    await new Promise<void>((resolve) => {
+      try {
+        nativeDevice!.reset(() => {
+          // Close inside the callback so the close happens on the same
+          // libusb event loop tick as the reset completion.
+          try {
+            nativeDevice!.close();
+          } catch {
+            /* device handle may already be invalidated by reset */
+          }
+          resolve();
+        });
+      } catch {
+        // Reset call itself threw — try to close and resolve anyway
+        try {
+          nativeDevice!.close();
+        } catch {
+          /* swallow */
+        }
+        resolve();
+      }
+    });
+  } catch {
+    // findByIds or open() failed — proceed without reset.
+  }
+}
+
 export async function findHiDockNodeDevice(
   options: NodeUsbDiscoveryOptions = {},
 ): Promise<UsbDeviceLike> {
@@ -183,6 +228,11 @@ export async function findHiDockNodeDevice(
   const envOverride = process.env.HIDOCK_PREFERRED_PRODUCT_ID;
   const picked = selectPreferredHiDock(envOverride);
   if (picked) {
+    // Recover the device from any wedged state before handing it off to
+    // webusb. See resetDeviceBeforeClaim() docs for the rationale.
+    // MUST be awaited — racing webusb against the reset crashes libusb.
+    await resetDeviceBeforeClaim(picked.vendorId, picked.productId);
+
     const webusb = createNodeWebUsb(picked.productId);
     try {
       const device = await webusb.requestDevice({
