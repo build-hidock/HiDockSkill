@@ -79,6 +79,18 @@
       "Incomplete transfer" errors left H1E in a wedged kernel state
 - [x] All 272 tests pass; verified end-to-end on live H1E (27 files, 20 transcribed, 7 pending)
 
+## Completed (2026-04-08)
+
+- [x] USB sync stability: scale `readLimit` by file size in `client.ts:collectCommandBytes`
+      (root cause of every "Incomplete transfer" we'd been seeing — fixed truncation at 8-32 MB)
+- [x] Sync state correctness: stop marking FAILED files as processed in `meetingsSync.ts`
+      (caused today's recording to vanish from the candidate list after one truncated download)
+- [x] Added README warning about HiNotes Web tabs taking exclusive WebUSB control
+- [x] List view: per-row delete button (hover-only, hidden on pending rows)
+- [x] List view: periodic /data.json poll so device files refresh without page reload
+- [x] Click-to-rename speaker labels in note modal — bulk update across all matching badges,
+      persists to disk via POST /note/speaker, color stays stable across renames
+
 ## Future Work
 - [ ] Speaker enrollment (interface designed in `SpeakerProfile`/`SpeakerEnrollmentConfig`).
       Plan documented in `tasks/speaker-enrollment-plan.md` — needs update for moonshine-default world.
@@ -88,6 +100,12 @@
       works for non-English BASE models too
 - [ ] Multi-device sync UI: add an in-app device picker so the user can pick which HiDock
       to sync from when multiple are connected (currently uses preference order or env var)
-- [ ] Investigate why "Incomplete transfer for command=0x5" happens on large files —
-      it's the upstream cause of the device wedging that the reset workaround papers over
+- [ ] Investigate why "Incomplete transfer for command=0x5" still happens on some files —
+      the readLimit fix solved the most common cause but USB transfer reliability on huge
+      files (>100 MB) is still a separate intermittent issue worth root-causing
 - [ ] Click-to-sync on pending device-file rows (currently no-op; future: enqueue manual sync)
+- [ ] Speaker rename → also update `Attendee:` line in meetingindex.md so renamed speakers
+      are searchable as attendees (currently only the transcript section is rewritten)
+- [ ] Multi-device aware plug-in detection: track each connected HiDock by serial, fire a
+      plug-in event for each NEW device (currently single-boolean — plugging P1 while H1E
+      is already connected doesn't fire a fresh popup)
