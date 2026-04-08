@@ -30,6 +30,21 @@ export interface RawDeviceFileEntry {
     modifiedAt: string | null;
     deviceName: string;
 }
+/**
+ * Rename a speaker in a meeting note's transcript section.
+ *
+ * Matches lines of the form `[<oldName>]:` or `[<oldName> @<seconds>]:` and
+ * replaces only the speaker name part — the `@seconds` timestamp is preserved.
+ * Only operates on lines INSIDE the `## Transcript` section of the markdown
+ * file; the summary, attendee list, and any other section are left untouched.
+ *
+ * Returns the rewritten content and the count of lines replaced. Exported so
+ * unit tests can exercise the regex without needing a running HTTP server.
+ */
+export declare function renameSpeakerInTranscript(content: string, fromName: string, toName: string): {
+    content: string;
+    replaced: number;
+};
 export interface GalaxyServerHandle {
     server: http.Server;
     url: string;

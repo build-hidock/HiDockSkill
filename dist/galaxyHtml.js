@@ -735,10 +735,38 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     margin-right: 6px;
     font-size: 12px;
     letter-spacing: 0.3px;
+    cursor: text;
+    transition: filter 0.12s, outline 0.12s;
     /* default (used when no per-speaker color is assigned) */
     color: #c084fc;
     background: rgba(168,85,247,0.12);
     border: 1px solid rgba(168,85,247,0.22);
+  }
+  .speaker-label:hover {
+    filter: brightness(1.15);
+    outline: 1px dashed currentColor;
+    outline-offset: 1px;
+  }
+  .speaker-label-input {
+    display: inline-block;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 1px 8px;
+    margin-right: 6px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    background: rgba(0,0,0,0.45);
+    color: var(--text-primary);
+    border: 1px solid rgba(168,85,247,0.55);
+    outline: none;
+    width: auto;
+    min-width: 80px;
+    max-width: 240px;
+    font-family: inherit;
+  }
+  .speaker-label-input:focus {
+    border-color: #c084fc;
+    box-shadow: 0 0 0 2px rgba(168,85,247,0.25);
   }
   .note-loading-text {
     color: var(--text-dim);
@@ -2332,14 +2360,111 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
             ? '<span class="transcript-time" data-seek="' + startSec + '">' + fmtTime(startSec) + '</span>'
             : '';
           var style = speakerStyle(speakerIndex[rawName]);
+          // data-speaker carries the canonical name string used to:
+          //   (1) find all sibling labels for a single rename to update at once
+          //   (2) send the rename request to the server
+          // The color stays inline-styled so renames don't shift palette assignments.
           return '<div class="transcript-line" data-start="' + startSec + '">'
             + timeHtml
-            + '<span class="speaker-label" style="' + style + '">' + name + '</span>'
+            + '<span class="speaker-label" data-speaker="' + escapeAttr(rawName) + '" title="Click to rename" style="' + style + '">' + name + '</span>'
             + text + '</div>';
         }
         if (line.trim() === "") return "";
         return '<div class="transcript-line">' + escapeHtml(line) + '</div>';
       }).join("");
+    }
+
+    function escapeAttr(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/</g, "&lt;");
+    }
+
+    // ---------- Inline speaker rename ----------
+    // Click any speaker label in the transcript to edit its name. On Enter
+    // (or blur with a non-empty change), POST the rename to /note/speaker
+    // and update every label in the modal whose data-speaker matches the old
+    // name. Color is preserved because the inline style is left untouched.
+    // Esc cancels without saving.
+    var _speakerRenameNoteId = null;
+    function setActiveNoteForRename(id) {
+      _speakerRenameNoteId = id;
+    }
+    function attachSpeakerRenameHandlers() {
+      var transcriptEl = document.getElementById("nm-transcript");
+      if (!transcriptEl) return;
+      transcriptEl.addEventListener("click", function(e) {
+        var target = e.target;
+        if (!target || !target.classList || !target.classList.contains("speaker-label")) return;
+        // Don't re-enter edit mode if already editing
+        if (target.dataset.editing === "1") return;
+        beginSpeakerEdit(target);
+      });
+    }
+    function beginSpeakerEdit(labelEl) {
+      var oldName = labelEl.getAttribute("data-speaker") || labelEl.textContent || "";
+      var inlineStyle = labelEl.getAttribute("style") || "";
+      labelEl.dataset.editing = "1";
+
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "speaker-label-input";
+      input.value = oldName;
+      // Inherit the speaker's tint via the inline style — keeps the visual
+      // identity stable while editing.
+      input.setAttribute("style", inlineStyle);
+      input.style.cursor = "text";
+      // Auto-size to content (rough)
+      input.style.width = Math.max(80, oldName.length * 8 + 24) + "px";
+
+      var parent = labelEl.parentNode;
+      parent.replaceChild(input, labelEl);
+      input.focus();
+      input.select();
+
+      var done = false;
+      function finish(commit) {
+        if (done) return;
+        done = true;
+        var newName = (input.value || "").trim();
+        if (!commit || !newName || newName === oldName) {
+          parent.replaceChild(labelEl, input);
+          delete labelEl.dataset.editing;
+          return;
+        }
+        // Optimistically swap input → label so the UI stays responsive
+        parent.replaceChild(labelEl, input);
+        delete labelEl.dataset.editing;
+        applySpeakerRenameLocally(oldName, newName);
+
+        if (_speakerRenameNoteId) {
+          fetch("/note/speaker?id=" + encodeURIComponent(_speakerRenameNoteId), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from: oldName, to: newName }),
+          }).catch(function() { /* server unreachable — local change still applied */ });
+        }
+      }
+      input.addEventListener("blur", function() { finish(true); });
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+      });
+    }
+    function applySpeakerRenameLocally(oldName, newName) {
+      var transcriptEl = document.getElementById("nm-transcript");
+      if (!transcriptEl) return;
+      var labels = transcriptEl.querySelectorAll('.speaker-label[data-speaker="' + cssEscape(oldName) + '"]');
+      labels.forEach(function(el) {
+        el.textContent = newName;
+        el.setAttribute("data-speaker", newName);
+      });
+    }
+    // Minimal CSS attribute selector escape — handles backslash and quote.
+    function cssEscape(s) {
+      return String(s || "").replace(/(["\\\\])/g, "\\\\$1");
     }
 
     // Audio-transcript sync state
@@ -2409,6 +2534,9 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     // Exposed so list view rows can trigger the same delete confirmation flow
     // as the modal's delete button. Wired in renderListRows() per row.
     window._deleteNote = function(d) { deleteNote(d); };
+    // Attach the click-to-edit handler once. It uses event delegation on
+    // #nm-transcript so dynamically-rendered speaker labels are covered.
+    attachSpeakerRenameHandlers();
     function openNoteModal(d) {
       // Mark as read — remove new-note styling
       if (d.isNew) {
@@ -2474,6 +2602,10 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       var transcriptEl = document.getElementById("nm-transcript");
       summaryEl.innerHTML = '<span class="note-loading-text">Loading...</span>';
       transcriptEl.textContent = "";
+
+      // Tell the inline speaker-rename handler which note this transcript
+      // belongs to, so renames can be persisted to the right markdown file.
+      setActiveNoteForRename(d.id);
 
       fetch("/note?id=" + encodeURIComponent(d.id))
         .then(function(res) { return res.ok ? res.json() : null; })

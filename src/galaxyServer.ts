@@ -39,6 +39,53 @@ export interface RawDeviceFileEntry {
   deviceName: string;
 }
 
+/**
+ * Rename a speaker in a meeting note's transcript section.
+ *
+ * Matches lines of the form `[<oldName>]:` or `[<oldName> @<seconds>]:` and
+ * replaces only the speaker name part — the `@seconds` timestamp is preserved.
+ * Only operates on lines INSIDE the `## Transcript` section of the markdown
+ * file; the summary, attendee list, and any other section are left untouched.
+ *
+ * Returns the rewritten content and the count of lines replaced. Exported so
+ * unit tests can exercise the regex without needing a running HTTP server.
+ */
+export function renameSpeakerInTranscript(
+  content: string,
+  fromName: string,
+  toName: string,
+): { content: string; replaced: number } {
+  if (!fromName || !toName || fromName === toName) {
+    return { content, replaced: 0 };
+  }
+  const sectionMatch = content.match(/## Transcript\n([\s\S]*?)$/);
+  if (!sectionMatch || sectionMatch.index === undefined) {
+    return { content, replaced: 0 };
+  }
+  const sectionStart = sectionMatch.index + "## Transcript\n".length;
+  const before = content.slice(0, sectionStart);
+  const transcriptBody = content.slice(sectionStart);
+
+  // Escape the from name for use in a regex.
+  const escaped = fromName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Match `[<from>]:` or `[<from> @<seconds>]:` at the start of a line.
+  const lineRegex = new RegExp(
+    `^\\[${escaped}(\\s+@[\\d.]+)?\\]:`,
+    "gm",
+  );
+
+  let replaced = 0;
+  const updatedBody = transcriptBody.replace(lineRegex, (_match, timeSuffix: string | undefined) => {
+    replaced += 1;
+    return `[${toName}${timeSuffix ?? ""}]:`;
+  });
+
+  if (replaced === 0) {
+    return { content, replaced: 0 };
+  }
+  return { content: before + updatedBody, replaced };
+}
+
 export interface GalaxyServerHandle {
   server: http.Server;
   url: string;
@@ -291,6 +338,75 @@ export function startGalaxyServer(
             res.end("Error reading note");
             log(`GET /note -> 500 (${node.notePath})`);
           });
+        return;
+      }
+
+      // POST /note/speaker?id=NODE_ID
+      // Body: { from: "Speaker 0", to: "Sean Song" }
+      // Renames every occurrence of `[<from>(\s+@<seconds>)?]:` in the note's
+      // transcript to `[<to>$1]:`. Used by the inline speaker-label editor in
+      // the frontend so the user can rename diarized speakers and have it
+      // persist to disk. All matching lines update at once.
+      if (req.method === "POST" && pathname === "/note/speaker") {
+        const nodeId = url.searchParams.get("id");
+        if (!nodeId || !graphData) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not Found");
+          return;
+        }
+        const node = graphData.nodes.find((n) => n.id === nodeId);
+        if (!node) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Node not found");
+          return;
+        }
+        let body = "";
+        req.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+        req.on("end", () => {
+          let parsed: { from?: string; to?: string };
+          try {
+            parsed = JSON.parse(body || "{}");
+          } catch {
+            res.writeHead(400, { "Content-Type": "text/plain" });
+            res.end("Bad JSON");
+            return;
+          }
+          const fromName = (parsed.from ?? "").trim();
+          const toName = (parsed.to ?? "").trim();
+          if (!fromName || !toName) {
+            res.writeHead(400, { "Content-Type": "text/plain" });
+            res.end("from and to are required");
+            return;
+          }
+          if (fromName === toName) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, replaced: 0 }));
+            return;
+          }
+          (async () => {
+            try {
+              const content = await fs.readFile(node.notePath, "utf8");
+              const updated = renameSpeakerInTranscript(content, fromName, toName);
+              if (updated.replaced === 0) {
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: true, replaced: 0 }));
+                log(`POST /note/speaker -> 200 (no matches: ${fromName})`);
+                return;
+              }
+              await fs.writeFile(node.notePath, updated.content, "utf8");
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: true, replaced: updated.replaced }));
+              log(
+                `POST /note/speaker -> 200 (${updated.replaced} lines: ` +
+                `"${fromName}" -> "${toName}" in ${node.notePath})`,
+              );
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "text/plain" });
+              res.end("Error updating note");
+              log(`POST /note/speaker -> 500 (${node.notePath})`);
+            }
+          })();
+        });
         return;
       }
 
