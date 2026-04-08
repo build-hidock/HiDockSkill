@@ -51,20 +51,30 @@ export function buildSpeakerRegex(from, flags = "g") {
 // Layer 1+2: Note file (Transcript + Summary)
 // ---------------------------------------------------------------------------
 /**
- * Rewrite both the `## Transcript` and `## Summary` sections of a meeting
- * note's markdown content. Other sections (frontmatter metadata, additional
- * H2 sections) are left untouched.
+ * Rewrite a speaker name in a meeting note.
  *
- * Transcript replacement is line-anchored: `[<from>(\s+@<sec>)?]:` → `[<to>$1]:`
- * Summary replacement is word-token: any whole-token mention of `<from>`.
+ * Two modes, controlled by `options.lineStart`:
  *
- * Returns the rewritten content and total replacement count.
+ *   BULK (lineStart undefined) — "rename this speaker"
+ *     - Rewrites every `[<from>(\s+@<sec>)?]:` line in `## Transcript`
+ *     - Rewrites every word-token `<from>` mention in `## Summary`
+ *     - Used when the user is giving a diarized speaker a real name
+ *
+ *   SINGLE (lineStart provided) — "fix this misdiarized line"
+ *     - Rewrites ONLY the transcript line whose `@<lineStart>` matches
+ *     - Does NOT touch the summary or any other line
+ *     - Used when the user is fixing a single misdiarized sentence by
+ *       reassigning it to a different (usually existing) speaker
+ *
+ * Other sections (frontmatter metadata, additional H2 sections) are left
+ * untouched in both modes.
  */
-export function renameSpeakerInNoteContent(content, from, to) {
+export function renameSpeakerInNoteContent(content, from, to, options = {}) {
     if (!from || !to || from === to)
         return { content, replaced: 0 };
     let updated = content;
     let replaced = 0;
+    const escapedFrom = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // --- Transcript section: line-anchored ---
     const transcriptHeader = "## Transcript\n";
     const transcriptStart = updated.indexOf(transcriptHeader);
@@ -72,31 +82,52 @@ export function renameSpeakerInNoteContent(content, from, to) {
         const sectionStart = transcriptStart + transcriptHeader.length;
         const before = updated.slice(0, sectionStart);
         const transcript = updated.slice(sectionStart);
-        const escapedFrom = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const lineRegex = new RegExp(`^\\[${escapedFrom}(\\s+@[\\d.]+)?\\]:`, "gm");
+        let lineRegex;
+        if (options.lineStart !== undefined) {
+            // SINGLE mode: anchor on the exact `@<lineStart>` so we only touch the
+            // one line the user clicked. Escape the lineStart string for safety
+            // (defense in depth — it's normally a number-string, but a malformed
+            // value should not be able to inject regex metachars).
+            const escapedLine = options.lineStart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            lineRegex = new RegExp(`^\\[${escapedFrom}\\s+@${escapedLine}\\]:`, "gm");
+        }
+        else {
+            // BULK mode: match every line for this speaker, with or without timestamp
+            lineRegex = new RegExp(`^\\[${escapedFrom}(\\s+@[\\d.]+)?\\]:`, "gm");
+        }
         const newTranscript = transcript.replace(lineRegex, (_match, timeSuffix) => {
             replaced += 1;
+            if (options.lineStart !== undefined) {
+                // The single-line regex doesn't have a capture group; reconstruct
+                // the timestamp from the lineStart we already know.
+                return `[${to} @${options.lineStart}]:`;
+            }
             return `[${to}${timeSuffix ?? ""}]:`;
         });
         updated = before + newTranscript;
     }
-    // --- Summary section: word-token ---
-    // The summary section runs from `## Summary\n` until `## Transcript` (the
-    // ONLY hard section break — LLM summaries contain nested H2s like
-    // `## About Meeting`, `## Meeting Outline` which are part of the summary
-    // body, not section breaks). This matches wikiCompiler.extractSummarySection.
-    const summaryMatch = updated.match(/## Summary\n([\s\S]*?)(?=\n## Transcript\b|$)/);
-    if (summaryMatch && summaryMatch.index !== undefined && summaryMatch[1] !== undefined) {
-        const sectionStart = summaryMatch.index + "## Summary\n".length;
-        const sectionEnd = sectionStart + summaryMatch[1].length;
-        const summaryBody = updated.slice(sectionStart, sectionEnd);
-        const wordRegex = buildSpeakerRegex(from);
-        const newSummary = summaryBody.replace(wordRegex, () => {
-            replaced += 1;
-            return to;
-        });
-        if (newSummary !== summaryBody) {
-            updated = updated.slice(0, sectionStart) + newSummary + updated.slice(sectionEnd);
+    // --- Summary section: word-token, BULK mode only ---
+    // Single-line fixes don't touch the summary because the speaker still has
+    // OTHER lines that haven't been reassigned — the summary's mentions of the
+    // speaker are still about a speaker who exists.
+    if (options.lineStart === undefined) {
+        // The summary section runs from `## Summary\n` until `## Transcript` (the
+        // ONLY hard section break — LLM summaries contain nested H2s like
+        // `## About Meeting`, `## Meeting Outline` which are part of the summary
+        // body, not section breaks). This matches wikiCompiler.extractSummarySection.
+        const summaryMatch = updated.match(/## Summary\n([\s\S]*?)(?=\n## Transcript\b|$)/);
+        if (summaryMatch && summaryMatch.index !== undefined && summaryMatch[1] !== undefined) {
+            const sectionStart = summaryMatch.index + "## Summary\n".length;
+            const sectionEnd = sectionStart + summaryMatch[1].length;
+            const summaryBody = updated.slice(sectionStart, sectionEnd);
+            const wordRegex = buildSpeakerRegex(from);
+            const newSummary = summaryBody.replace(wordRegex, () => {
+                replaced += 1;
+                return to;
+            });
+            if (newSummary !== summaryBody) {
+                updated = updated.slice(0, sectionStart) + newSummary + updated.slice(sectionEnd);
+            }
         }
     }
     return { content: updated, replaced };

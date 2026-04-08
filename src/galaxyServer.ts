@@ -303,20 +303,28 @@ export function startGalaxyServer(
       }
 
       // POST /note/speaker?id=NODE_ID
-      // Body: { from: "Speaker 0", to: "Sean Song" }
+      // Body: { from: "Speaker 0", to: "Sean Song", lineStart?: "12.4" }
       //
-      // Propagates a speaker rename across all four layers of the note + wiki
-      // data model in one operation:
-      //   1. The note file's ## Transcript section ([Speaker 0 @sec]: lines)
-      //   2. The note file's ## Summary section (text mentions)
-      //   3. The meeting index row's Brief / Title fields
-      //   4. The wiki: people page rename (or merge if destination exists),
-      //      plus inline mentions in projects/decisions/topics/actions
+      // Two distinct modes determined by `lineStart`:
       //
-      // After the disk writes, regenerates the wiki master index, rebuilds the
-      // in-memory wiki search index, and updates GalaxyNode.attendees in the
-      // current graph data so the dashboard reflects the rename without a sync.
-      // Returns per-layer counts so the frontend can show what was touched.
+      //   BULK (no lineStart) — "rename this speaker"
+      //     User intent: give a diarized speaker a real name, or merge two
+      //     speakers entirely. Propagates across all four layers:
+      //       1. ## Transcript: every `[<from>]:` line
+      //       2. ## Summary:    every word-token mention
+      //       3. meetingindex.md row's Brief/Title/Attendee fields
+      //       4. Wiki:          people page rename or merge + cross-references
+      //     Plus refreshes the wiki master index, search index, and in-memory
+      //     graph attendee data.
+      //
+      //   SINGLE (lineStart provided) — "fix this misdiarized line"
+      //     User intent: a single sentence was assigned to the wrong speaker
+      //     by the diarizer. Reassigns ONLY the transcript line whose
+      //     `@<lineStart>` matches. The other lines from the original speaker
+      //     stay as-is. Summary, index, and wiki are NOT touched — the
+      //     original speaker still exists for the unchanged lines.
+      //
+      // Returns per-layer counts so the frontend can confirm what was touched.
       if (req.method === "POST" && pathname === "/note/speaker") {
         const nodeId = url.searchParams.get("id");
         if (!nodeId || !graphData) {
@@ -333,7 +341,7 @@ export function startGalaxyServer(
         let body = "";
         req.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
         req.on("end", () => {
-          let parsed: { from?: string; to?: string };
+          let parsed: { from?: string; to?: string; lineStart?: string | number };
           try {
             parsed = JSON.parse(body || "{}");
           } catch {
@@ -343,6 +351,15 @@ export function startGalaxyServer(
           }
           const fromName = (parsed.from ?? "").trim();
           const toName = (parsed.to ?? "").trim();
+          // lineStart is the @<sec> identifier of a single transcript line.
+          // Accept either a string ("12.4") or number (12.4) for flexibility.
+          // Empty / null / undefined → BULK mode.
+          let lineStart: string | undefined;
+          if (parsed.lineStart !== undefined && parsed.lineStart !== null && parsed.lineStart !== "") {
+            lineStart = String(parsed.lineStart);
+          }
+          const isSingle = lineStart !== undefined;
+
           if (!fromName || !toName) {
             res.writeHead(400, { "Content-Type": "text/plain" });
             res.end("from and to are required");
@@ -352,6 +369,7 @@ export function startGalaxyServer(
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
               ok: true,
+              mode: isSingle ? "single" : "bulk",
               note: 0,
               index: 0,
               wiki: { filesUpdated: 0, peopleRenamed: 0, peopleMerged: 0, replacements: 0 },
@@ -371,10 +389,13 @@ export function startGalaxyServer(
             const wikiResult = { filesUpdated: 0, peopleRenamed: 0, peopleMerged: 0, replacements: 0 };
 
             try {
-              // --- Layer 1+2: Rewrite the note file (Transcript + Summary) ---
+              // --- Layer 1+2: Rewrite the note file ---
+              // SINGLE mode rewrites only the matching transcript line.
+              // BULK mode rewrites all transcript lines + summary mentions.
               try {
                 const noteContent = await fs.readFile(node.notePath, "utf8");
-                const updated = renameSpeakerInNoteContent(noteContent, fromName, toName);
+                const renameOptions = lineStart !== undefined ? { lineStart } : {};
+                const updated = renameSpeakerInNoteContent(noteContent, fromName, toName, renameOptions);
                 if (updated.replaced > 0) {
                   await fs.writeFile(node.notePath, updated.content, "utf8");
                   noteReplaced = updated.replaced;
@@ -383,57 +404,63 @@ export function startGalaxyServer(
                 log(`POST /note/speaker: note file rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
               }
 
-              // --- Layer 3: Rewrite the meeting index row ---
-              try {
-                const indexContent = await fs.readFile(indexPath, "utf8");
-                const updated = renameSpeakerInIndexContent(indexContent, node.source, fromName, toName);
-                if (updated.replaced > 0) {
-                  await fs.writeFile(indexPath, updated.content, "utf8");
-                  indexReplaced = updated.replaced;
-                }
-              } catch (e) {
-                // Index file may not exist for older notes — non-fatal
-                log(`POST /note/speaker: index rewrite skipped: ${e instanceof Error ? e.message : String(e)}`);
-              }
-
-              // --- Layer 4: Walk the wiki ---
-              try {
-                const wr = await renameSpeakerInWikiDir(wikiDir, fromName, toName);
-                Object.assign(wikiResult, wr);
-              } catch (e) {
-                log(`POST /note/speaker: wiki rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
-              }
-
-              // --- Refresh derived state ---
-              // Regenerate the master wiki index so renamed slugs propagate.
-              if (wikiResult.peopleRenamed + wikiResult.peopleMerged + wikiResult.filesUpdated > 0) {
+              // --- Layer 3+4 are BULK only ---
+              // A single-line fix doesn't propagate to the summary, the index,
+              // or the wiki because the original speaker still exists for the
+              // unchanged transcript lines. The wiki entity for the original
+              // speaker is still valid; only that one line's identity changed.
+              if (!isSingle) {
+                // --- Layer 3: Rewrite the meeting index row ---
                 try {
-                  await regenerateIndex(wikiDir);
+                  const indexContent = await fs.readFile(indexPath, "utf8");
+                  const updated = renameSpeakerInIndexContent(indexContent, node.source, fromName, toName);
+                  if (updated.replaced > 0) {
+                    await fs.writeFile(indexPath, updated.content, "utf8");
+                    indexReplaced = updated.replaced;
+                  }
                 } catch (e) {
-                  log(`POST /note/speaker: wiki index regen failed: ${e instanceof Error ? e.message : String(e)}`);
+                  // Index file may not exist for older notes — non-fatal
+                  log(`POST /note/speaker: index rewrite skipped: ${e instanceof Error ? e.message : String(e)}`);
                 }
-                // Rebuild the in-memory wiki search index so AskHiDock returns the new name.
-                try {
-                  const newSearchIndex = await buildSearchIndex(wikiDir);
-                  wikiIndex = newSearchIndex;
-                  log(`Wiki search index updated: ${newSearchIndex.documents.length} documents`);
-                } catch (e) {
-                  log(`POST /note/speaker: wiki search rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
-                }
-              }
 
-              // Update in-memory graph node attendees so the list view's
-              // attendee column reflects the rename without a full sync.
-              if (graphData) {
-                for (const n of graphData.nodes) {
-                  if (n.attendees && n.attendees.length > 0) {
-                    n.attendees = n.attendees.map((a) => (a === fromName ? toName : a));
+                // --- Layer 4: Walk the wiki ---
+                try {
+                  const wr = await renameSpeakerInWikiDir(wikiDir, fromName, toName);
+                  Object.assign(wikiResult, wr);
+                } catch (e) {
+                  log(`POST /note/speaker: wiki rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
+                }
+
+                // --- Refresh derived state ---
+                if (wikiResult.peopleRenamed + wikiResult.peopleMerged + wikiResult.filesUpdated > 0) {
+                  try {
+                    await regenerateIndex(wikiDir);
+                  } catch (e) {
+                    log(`POST /note/speaker: wiki index regen failed: ${e instanceof Error ? e.message : String(e)}`);
+                  }
+                  try {
+                    const newSearchIndex = await buildSearchIndex(wikiDir);
+                    wikiIndex = newSearchIndex;
+                    log(`Wiki search index updated: ${newSearchIndex.documents.length} documents`);
+                  } catch (e) {
+                    log(`POST /note/speaker: wiki search rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
+                  }
+                }
+
+                // Update in-memory graph node attendees so the list view's
+                // attendee column reflects the rename without a full sync.
+                if (graphData) {
+                  for (const n of graphData.nodes) {
+                    if (n.attendees && n.attendees.length > 0) {
+                      n.attendees = n.attendees.map((a) => (a === fromName ? toName : a));
+                    }
                   }
                 }
               }
 
               const summary = {
                 ok: true,
+                mode: isSingle ? "single" : "bulk",
                 note: noteReplaced,
                 index: indexReplaced,
                 wiki: wikiResult,
@@ -441,8 +468,8 @@ export function startGalaxyServer(
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify(summary));
               log(
-                `POST /note/speaker -> 200 ("${fromName}" -> "${toName}" | ` +
-                `note=${noteReplaced} index=${indexReplaced} ` +
+                `POST /note/speaker -> 200 (${isSingle ? "single@" + lineStart : "bulk"} ` +
+                `"${fromName}" -> "${toName}" | note=${noteReplaced} index=${indexReplaced} ` +
                 `wiki=${wikiResult.filesUpdated}files,${wikiResult.peopleRenamed}renamed,${wikiResult.peopleMerged}merged,${wikiResult.replacements}repl)`,
               );
             } catch (err) {

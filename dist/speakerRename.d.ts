@@ -65,16 +65,27 @@ export interface SpeakerRenameSummary {
  */
 export declare function buildSpeakerRegex(from: string, flags?: string): RegExp;
 /**
- * Rewrite both the `## Transcript` and `## Summary` sections of a meeting
- * note's markdown content. Other sections (frontmatter metadata, additional
- * H2 sections) are left untouched.
+ * Rewrite a speaker name in a meeting note.
  *
- * Transcript replacement is line-anchored: `[<from>(\s+@<sec>)?]:` → `[<to>$1]:`
- * Summary replacement is word-token: any whole-token mention of `<from>`.
+ * Two modes, controlled by `options.lineStart`:
  *
- * Returns the rewritten content and total replacement count.
+ *   BULK (lineStart undefined) — "rename this speaker"
+ *     - Rewrites every `[<from>(\s+@<sec>)?]:` line in `## Transcript`
+ *     - Rewrites every word-token `<from>` mention in `## Summary`
+ *     - Used when the user is giving a diarized speaker a real name
+ *
+ *   SINGLE (lineStart provided) — "fix this misdiarized line"
+ *     - Rewrites ONLY the transcript line whose `@<lineStart>` matches
+ *     - Does NOT touch the summary or any other line
+ *     - Used when the user is fixing a single misdiarized sentence by
+ *       reassigning it to a different (usually existing) speaker
+ *
+ * Other sections (frontmatter metadata, additional H2 sections) are left
+ * untouched in both modes.
  */
-export declare function renameSpeakerInNoteContent(content: string, from: string, to: string): NoteRenameResult;
+export declare function renameSpeakerInNoteContent(content: string, from: string, to: string, options?: {
+    lineStart?: string;
+}): NoteRenameResult;
 /**
  * Rewrite the speaker name within the index row whose `Source: <source>` field
  * matches. Word-token match across the whole row, so any field (Title, Brief,

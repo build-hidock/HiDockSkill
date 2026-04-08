@@ -768,6 +768,16 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     border-color: #c084fc;
     box-shadow: 0 0 0 2px rgba(168,85,247,0.25);
   }
+  .speaker-edit-hint {
+    display: inline-block;
+    margin-top: 3px;
+    font-size: 10px;
+    color: var(--text-dim);
+    font-style: italic;
+    line-height: 1.2;
+    pointer-events: none;
+    white-space: nowrap;
+  }
   .note-loading-text {
     color: var(--text-dim);
     font-style: italic;
@@ -2382,11 +2392,29 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         .replace(/</g, "&lt;");
     }
 
-    // ---------- Inline speaker rename ----------
-    // Click any speaker label in the transcript to edit its name. On Enter
-    // (or blur with a non-empty change), POST the rename to /note/speaker
-    // and update every label in the modal whose data-speaker matches the old
-    // name. Color is preserved because the inline style is left untouched.
+    // ---------- Inline speaker rename — TWO MODES ----------
+    //
+    // Speaker labels are click-to-edit. There are two distinct user intents
+    // when editing a label, and the UI must support both:
+    //
+    //   1. BULK RENAME ("this speaker is Sean")
+    //      User wants to give a diarized speaker a real name. All instances
+    //      of the old name → new name. Format stays the same (it's the same
+    //      person, just relabeled).
+    //
+    //   2. SINGLE-LINE FIX ("this sentence was misdiarized")
+    //      User wants to reassign one specific line to a different (usually
+    //      existing) speaker. Only the clicked line updates. Format adopts
+    //      the existing target speaker's color.
+    //
+    // Mode is selected via a HEURISTIC (with explicit override):
+    //   - New name is NOVEL  → BULK   (typical "give a name" case)
+    //   - New name is EXISTING → SINGLE (typical "fix one mistake" case)
+    //   - Shift+Enter         → ALWAYS BULK (force-merge two speakers)
+    //
+    // The hint text below the input tells the user which mode the current
+    // input will trigger so the behavior is discoverable.
+    //
     // Esc cancels without saving.
     var _speakerRenameNoteId = null;
     function setActiveNoteForRename(id) {
@@ -2398,7 +2426,6 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       transcriptEl.addEventListener("click", function(e) {
         var target = e.target;
         if (!target || !target.classList || !target.classList.contains("speaker-label")) return;
-        // Don't re-enter edit mode if already editing
         if (target.dataset.editing === "1") return;
         beginSpeakerEdit(target);
       });
@@ -2408,60 +2435,190 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       var inlineStyle = labelEl.getAttribute("style") || "";
       labelEl.dataset.editing = "1";
 
+      // The transcript line containing this label carries data-start with the
+      // segment timestamp. We need this to identify the line in SINGLE mode.
+      var lineEl = labelEl.closest(".transcript-line");
+      var lineStart = lineEl ? lineEl.getAttribute("data-start") : null;
+
+      // Container that holds both the input AND the hint text below it
+      var wrap = document.createElement("span");
+      wrap.className = "speaker-edit-wrap";
+      wrap.style.display = "inline-flex";
+      wrap.style.flexDirection = "column";
+      wrap.style.alignItems = "flex-start";
+      wrap.style.verticalAlign = "middle";
+      wrap.style.marginRight = "6px";
+
       var input = document.createElement("input");
       input.type = "text";
       input.className = "speaker-label-input";
       input.value = oldName;
-      // Inherit the speaker's tint via the inline style — keeps the visual
-      // identity stable while editing.
       input.setAttribute("style", inlineStyle);
       input.style.cursor = "text";
-      // Auto-size to content (rough)
       input.style.width = Math.max(80, oldName.length * 8 + 24) + "px";
+      input.style.marginRight = "0";
+
+      var hint = document.createElement("span");
+      hint.className = "speaker-edit-hint";
+      wrap.appendChild(input);
+      wrap.appendChild(hint);
 
       var parent = labelEl.parentNode;
-      parent.replaceChild(input, labelEl);
+      parent.replaceChild(wrap, labelEl);
       input.focus();
       input.select();
 
+      // Keep the hint text live as the user types so the mode is visible.
+      function refreshHint() {
+        var typed = (input.value || "").trim();
+        if (!typed || typed === oldName) {
+          hint.textContent = "Enter to save, Esc to cancel";
+          return;
+        }
+        var collidesWith = findExistingSpeakerLabel(typed);
+        if (collidesWith) {
+          // Existing speaker — single-line fix is the safer default.
+          hint.textContent =
+            "↵ fix this line · ⇧↵ merge all into " + typed;
+        } else {
+          // Novel name — bulk rename is the natural action.
+          var count = countSpeakerLabels(oldName);
+          hint.textContent = "↵ rename all " + count + " line" + (count === 1 ? "" : "s");
+        }
+      }
+      input.addEventListener("input", refreshHint);
+      refreshHint();
+
       var done = false;
-      function finish(commit) {
+      function finish(commit, forceBulk) {
         if (done) return;
         done = true;
         var newName = (input.value || "").trim();
         if (!commit || !newName || newName === oldName) {
-          parent.replaceChild(labelEl, input);
+          parent.replaceChild(labelEl, wrap);
           delete labelEl.dataset.editing;
           return;
         }
-        // Optimistically swap input → label so the UI stays responsive
-        parent.replaceChild(labelEl, input);
-        delete labelEl.dataset.editing;
-        applySpeakerRenameLocally(oldName, newName);
 
+        // Decide mode: explicit override → bulk; else heuristic.
+        var existingMatch = findExistingSpeakerLabel(newName);
+        var mode;
+        if (forceBulk) {
+          mode = "bulk";
+        } else if (existingMatch) {
+          mode = "single";
+        } else {
+          mode = "bulk";
+        }
+
+        // Restore the original label so applySpeakerRenameLocally can find it.
+        parent.replaceChild(labelEl, wrap);
+        delete labelEl.dataset.editing;
+
+        if (mode === "single") {
+          applySpeakerRenameSingle(labelEl, oldName, newName);
+        } else {
+          applySpeakerRenameBulk(oldName, newName);
+        }
+
+        // Persist to disk via the server endpoint.
         if (_speakerRenameNoteId) {
+          var body = { from: oldName, to: newName };
+          if (mode === "single" && lineStart !== null) {
+            body.lineStart = lineStart;
+          }
           fetch("/note/speaker?id=" + encodeURIComponent(_speakerRenameNoteId), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: oldName, to: newName }),
+            body: JSON.stringify(body),
           }).catch(function() { /* server unreachable — local change still applied */ });
         }
       }
-      input.addEventListener("blur", function() { finish(true); });
+
+      input.addEventListener("blur", function() { finish(true, false); });
       input.addEventListener("keydown", function(e) {
-        if (e.key === "Enter") { e.preventDefault(); finish(true); }
-        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(true, e.shiftKey === true);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          finish(false, false);
+        }
       });
     }
-    function applySpeakerRenameLocally(oldName, newName) {
+
+    // Find the FIRST existing label in the transcript whose data-speaker
+    // exactly matches the given name. Used to detect collisions for mode
+    // selection and to pull the harmonized style for visual merging.
+    function findExistingSpeakerLabel(name) {
+      var transcriptEl = document.getElementById("nm-transcript");
+      if (!transcriptEl) return null;
+      return transcriptEl.querySelector(
+        '.speaker-label[data-speaker="' + cssEscape(name) + '"]'
+      );
+    }
+
+    function countSpeakerLabels(name) {
+      var transcriptEl = document.getElementById("nm-transcript");
+      if (!transcriptEl) return 0;
+      return transcriptEl.querySelectorAll(
+        '.speaker-label[data-speaker="' + cssEscape(name) + '"]'
+      ).length;
+    }
+
+    // BULK rename: update every label in this transcript whose data-speaker
+    // matches the old name. Format harmonization rules:
+    //   - If the new name already exists in the transcript -> adopt that
+    //     speaker's style (visual merge: both old and existing speakers now
+    //     share one identity). This is the rare force-merge case.
+    //   - Otherwise keep the existing style (same speaker, new label).
+    function applySpeakerRenameBulk(oldName, newName) {
       var transcriptEl = document.getElementById("nm-transcript");
       if (!transcriptEl) return;
-      var labels = transcriptEl.querySelectorAll('.speaker-label[data-speaker="' + cssEscape(oldName) + '"]');
+      var existingMatch = transcriptEl.querySelector(
+        '.speaker-label[data-speaker="' + cssEscape(newName) + '"]'
+      );
+      var harmonizedStyle = existingMatch ? existingMatch.getAttribute("style") : null;
+      var labels = transcriptEl.querySelectorAll(
+        '.speaker-label[data-speaker="' + cssEscape(oldName) + '"]'
+      );
       labels.forEach(function(el) {
         el.textContent = newName;
         el.setAttribute("data-speaker", newName);
+        if (harmonizedStyle) {
+          el.setAttribute("style", harmonizedStyle);
+        }
       });
     }
+
+    // SINGLE-line fix: update only the clicked label. The format MUST adopt
+    // the new identity's color, otherwise the user sees a label that says
+    // the new name but still has the old speaker's color (which is exactly
+    // the bug the user reported).
+    function applySpeakerRenameSingle(labelEl, oldName, newName) {
+      var transcriptEl = document.getElementById("nm-transcript");
+      if (!transcriptEl) return;
+      // The new name necessarily exists in the transcript here (otherwise the
+      // mode would be bulk), so we can safely pull a style from any sibling
+      // label of the new identity. Skip labelEl itself in case it has already
+      // been mutated (defensive — labelEl shouldn't match yet).
+      var existing = null;
+      var candidates = transcriptEl.querySelectorAll(
+        '.speaker-label[data-speaker="' + cssEscape(newName) + '"]'
+      );
+      for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] !== labelEl) {
+          existing = candidates[i];
+          break;
+        }
+      }
+      labelEl.textContent = newName;
+      labelEl.setAttribute("data-speaker", newName);
+      if (existing) {
+        labelEl.setAttribute("style", existing.getAttribute("style") || "");
+      }
+    }
+
     // Minimal CSS attribute selector escape — handles backslash and quote.
     function cssEscape(s) {
       return String(s || "").replace(/(["\\\\])/g, "\\\\$1");

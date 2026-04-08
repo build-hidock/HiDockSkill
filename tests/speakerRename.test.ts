@@ -144,6 +144,85 @@ Speaker 0 contrasted this with another approach. Speaker 0 suggested a follow-up
     expect(result.replaced).toBe(1);
     expect(result.content).toContain("Sean spoke briefly.");
   });
+
+  // -------------------------------------------------------------------------
+  // SINGLE-line mode (lineStart provided) — fix one misdiarized sentence
+  // -------------------------------------------------------------------------
+
+  describe("SINGLE-line mode (lineStart provided)", () => {
+    const note = `# T
+
+## Summary
+
+Speaker 0 dominated the discussion. Speaker 0 will follow up.
+
+## Transcript
+
+[Speaker 0 @0.0]: Hello.
+[Speaker 1 @5.2]: Thanks.
+[Speaker 0 @8.7]: This sentence is actually Speaker 1 (diarizer mistake).
+[Speaker 0 @12.4]: Back to Speaker 0 for real.
+`;
+
+    it("rewrites ONLY the matching @lineStart line, leaves others alone", () => {
+      const result = renameSpeakerInNoteContent(note, "Speaker 0", "Speaker 1", { lineStart: "8.7" });
+      expect(result.replaced).toBe(1);
+      // The targeted line is reassigned
+      expect(result.content).toContain("[Speaker 1 @8.7]: This sentence is actually Speaker 1 (diarizer mistake).");
+      // Other Speaker 0 lines untouched
+      expect(result.content).toContain("[Speaker 0 @0.0]: Hello.");
+      expect(result.content).toContain("[Speaker 0 @12.4]: Back to Speaker 0 for real.");
+      // Speaker 1's existing line untouched
+      expect(result.content).toContain("[Speaker 1 @5.2]: Thanks.");
+    });
+
+    it("does NOT touch the summary section in single-line mode", () => {
+      const result = renameSpeakerInNoteContent(note, "Speaker 0", "Speaker 1", { lineStart: "8.7" });
+      // Summary mentions of Speaker 0 must remain — Speaker 0 still has lines
+      // 0.0 and 12.4 in the transcript, so they're still a valid speaker.
+      expect(result.content).toContain("Speaker 0 dominated the discussion.");
+      expect(result.content).toContain("Speaker 0 will follow up.");
+    });
+
+    it("returns replaced=0 when lineStart does not match any line", () => {
+      const result = renameSpeakerInNoteContent(note, "Speaker 0", "Sean", { lineStart: "999.9" });
+      expect(result.replaced).toBe(0);
+      expect(result.content).toBe(note);
+    });
+
+    it("does NOT match a different speaker on the same lineStart", () => {
+      // No line `[Speaker 0 @5.2]:` exists — line 5.2 belongs to Speaker 1
+      const result = renameSpeakerInNoteContent(note, "Speaker 0", "Sean", { lineStart: "5.2" });
+      expect(result.replaced).toBe(0);
+      // Speaker 1's line untouched
+      expect(result.content).toContain("[Speaker 1 @5.2]: Thanks.");
+    });
+
+    it("escapes regex metachars in lineStart (defense in depth)", () => {
+      const noteWithDot = `# T\n\n## Transcript\n\n[Speaker 0 @1.5]: Hi.\n[Speaker 0 @15]: Bye.\n`;
+      // "1.5" must NOT be interpreted as the regex `1` followed by ANY char
+      // followed by `5` (which would also match the literal `15` if `1.5` were
+      // a regex pattern).
+      const result = renameSpeakerInNoteContent(noteWithDot, "Speaker 0", "Sean", { lineStart: "1.5" });
+      expect(result.replaced).toBe(1);
+      expect(result.content).toContain("[Sean @1.5]: Hi.");
+      expect(result.content).toContain("[Speaker 0 @15]: Bye.");
+    });
+
+    it("is idempotent in single-line mode", () => {
+      const first = renameSpeakerInNoteContent(note, "Speaker 0", "Speaker 1", { lineStart: "8.7" });
+      const second = renameSpeakerInNoteContent(first.content, "Speaker 0", "Speaker 1", { lineStart: "8.7" });
+      // Second pass: the line is already Speaker 1, so 0 replacements
+      expect(second.replaced).toBe(0);
+      expect(second.content).toBe(first.content);
+    });
+
+    it("preserves the @lineStart in the rewritten line", () => {
+      const result = renameSpeakerInNoteContent(note, "Speaker 0", "Sean", { lineStart: "12.4" });
+      expect(result.content).toContain("[Sean @12.4]:");
+      expect(result.content).not.toContain("[Sean]:");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
