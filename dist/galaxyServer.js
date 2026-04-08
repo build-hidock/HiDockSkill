@@ -1,44 +1,11 @@
 import http from "node:http";
+import path from "node:path";
 import { promises as fs } from "node:fs";
 import { renderGalaxyHtml } from "./galaxyHtml.js";
-import { searchWiki } from "./wikiSearch.js";
+import { searchWiki, buildSearchIndex } from "./wikiSearch.js";
 import { streamLlmChatChunked } from "./llmChat.js";
-/**
- * Rename a speaker in a meeting note's transcript section.
- *
- * Matches lines of the form `[<oldName>]:` or `[<oldName> @<seconds>]:` and
- * replaces only the speaker name part — the `@seconds` timestamp is preserved.
- * Only operates on lines INSIDE the `## Transcript` section of the markdown
- * file; the summary, attendee list, and any other section are left untouched.
- *
- * Returns the rewritten content and the count of lines replaced. Exported so
- * unit tests can exercise the regex without needing a running HTTP server.
- */
-export function renameSpeakerInTranscript(content, fromName, toName) {
-    if (!fromName || !toName || fromName === toName) {
-        return { content, replaced: 0 };
-    }
-    const sectionMatch = content.match(/## Transcript\n([\s\S]*?)$/);
-    if (!sectionMatch || sectionMatch.index === undefined) {
-        return { content, replaced: 0 };
-    }
-    const sectionStart = sectionMatch.index + "## Transcript\n".length;
-    const before = content.slice(0, sectionStart);
-    const transcriptBody = content.slice(sectionStart);
-    // Escape the from name for use in a regex.
-    const escaped = fromName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // Match `[<from>]:` or `[<from> @<seconds>]:` at the start of a line.
-    const lineRegex = new RegExp(`^\\[${escaped}(\\s+@[\\d.]+)?\\]:`, "gm");
-    let replaced = 0;
-    const updatedBody = transcriptBody.replace(lineRegex, (_match, timeSuffix) => {
-        replaced += 1;
-        return `[${toName}${timeSuffix ?? ""}]:`;
-    });
-    if (replaced === 0) {
-        return { content, replaced: 0 };
-    }
-    return { content: before + updatedBody, replaced };
-}
+import { renameSpeakerInNoteContent, renameSpeakerInIndexContent, renameSpeakerInWikiDir, } from "./speakerRename.js";
+import { regenerateIndex } from "./wikiCompiler.js";
 const DEFAULT_PORT = 18180;
 const DEFAULT_HOST = "127.0.0.1";
 export function startGalaxyServer(options) {
@@ -264,10 +231,19 @@ export function startGalaxyServer(options) {
             }
             // POST /note/speaker?id=NODE_ID
             // Body: { from: "Speaker 0", to: "Sean Song" }
-            // Renames every occurrence of `[<from>(\s+@<seconds>)?]:` in the note's
-            // transcript to `[<to>$1]:`. Used by the inline speaker-label editor in
-            // the frontend so the user can rename diarized speakers and have it
-            // persist to disk. All matching lines update at once.
+            //
+            // Propagates a speaker rename across all four layers of the note + wiki
+            // data model in one operation:
+            //   1. The note file's ## Transcript section ([Speaker 0 @sec]: lines)
+            //   2. The note file's ## Summary section (text mentions)
+            //   3. The meeting index row's Brief / Title fields
+            //   4. The wiki: people page rename (or merge if destination exists),
+            //      plus inline mentions in projects/decisions/topics/actions
+            //
+            // After the disk writes, regenerates the wiki master index, rebuilds the
+            // in-memory wiki search index, and updates GalaxyNode.attendees in the
+            // current graph data so the dashboard reflects the rename without a sync.
+            // Returns per-layer counts so the frontend can show what was touched.
             if (req.method === "POST" && pathname === "/note/speaker") {
                 const nodeId = url.searchParams.get("id");
                 if (!nodeId || !graphData) {
@@ -302,29 +278,102 @@ export function startGalaxyServer(options) {
                     }
                     if (fromName === toName) {
                         res.writeHead(200, { "Content-Type": "application/json" });
-                        res.end(JSON.stringify({ ok: true, replaced: 0 }));
+                        res.end(JSON.stringify({
+                            ok: true,
+                            note: 0,
+                            index: 0,
+                            wiki: { filesUpdated: 0, peopleRenamed: 0, peopleMerged: 0, replacements: 0 },
+                        }));
                         return;
                     }
                     (async () => {
+                        // Compute the storage root from the note path. Both the meeting
+                        // index and the wiki dir are siblings of the meetings/whispers dir.
+                        const storageDir = node.notePath.replace(/\/(meetings|whispers)\/.*$/, "");
+                        const indexName = node.kind === "whisper" ? "whisperindex.md" : "meetingindex.md";
+                        const indexPath = path.join(storageDir, indexName);
+                        const wikiDir = path.join(storageDir, "wiki");
+                        let noteReplaced = 0;
+                        let indexReplaced = 0;
+                        const wikiResult = { filesUpdated: 0, peopleRenamed: 0, peopleMerged: 0, replacements: 0 };
                         try {
-                            const content = await fs.readFile(node.notePath, "utf8");
-                            const updated = renameSpeakerInTranscript(content, fromName, toName);
-                            if (updated.replaced === 0) {
-                                res.writeHead(200, { "Content-Type": "application/json" });
-                                res.end(JSON.stringify({ ok: true, replaced: 0 }));
-                                log(`POST /note/speaker -> 200 (no matches: ${fromName})`);
-                                return;
+                            // --- Layer 1+2: Rewrite the note file (Transcript + Summary) ---
+                            try {
+                                const noteContent = await fs.readFile(node.notePath, "utf8");
+                                const updated = renameSpeakerInNoteContent(noteContent, fromName, toName);
+                                if (updated.replaced > 0) {
+                                    await fs.writeFile(node.notePath, updated.content, "utf8");
+                                    noteReplaced = updated.replaced;
+                                }
                             }
-                            await fs.writeFile(node.notePath, updated.content, "utf8");
+                            catch (e) {
+                                log(`POST /note/speaker: note file rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
+                            }
+                            // --- Layer 3: Rewrite the meeting index row ---
+                            try {
+                                const indexContent = await fs.readFile(indexPath, "utf8");
+                                const updated = renameSpeakerInIndexContent(indexContent, node.source, fromName, toName);
+                                if (updated.replaced > 0) {
+                                    await fs.writeFile(indexPath, updated.content, "utf8");
+                                    indexReplaced = updated.replaced;
+                                }
+                            }
+                            catch (e) {
+                                // Index file may not exist for older notes — non-fatal
+                                log(`POST /note/speaker: index rewrite skipped: ${e instanceof Error ? e.message : String(e)}`);
+                            }
+                            // --- Layer 4: Walk the wiki ---
+                            try {
+                                const wr = await renameSpeakerInWikiDir(wikiDir, fromName, toName);
+                                Object.assign(wikiResult, wr);
+                            }
+                            catch (e) {
+                                log(`POST /note/speaker: wiki rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
+                            }
+                            // --- Refresh derived state ---
+                            // Regenerate the master wiki index so renamed slugs propagate.
+                            if (wikiResult.peopleRenamed + wikiResult.peopleMerged + wikiResult.filesUpdated > 0) {
+                                try {
+                                    await regenerateIndex(wikiDir);
+                                }
+                                catch (e) {
+                                    log(`POST /note/speaker: wiki index regen failed: ${e instanceof Error ? e.message : String(e)}`);
+                                }
+                                // Rebuild the in-memory wiki search index so AskHiDock returns the new name.
+                                try {
+                                    const newSearchIndex = await buildSearchIndex(wikiDir);
+                                    wikiIndex = newSearchIndex;
+                                    log(`Wiki search index updated: ${newSearchIndex.documents.length} documents`);
+                                }
+                                catch (e) {
+                                    log(`POST /note/speaker: wiki search rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
+                                }
+                            }
+                            // Update in-memory graph node attendees so the list view's
+                            // attendee column reflects the rename without a full sync.
+                            if (graphData) {
+                                for (const n of graphData.nodes) {
+                                    if (n.attendees && n.attendees.length > 0) {
+                                        n.attendees = n.attendees.map((a) => (a === fromName ? toName : a));
+                                    }
+                                }
+                            }
+                            const summary = {
+                                ok: true,
+                                note: noteReplaced,
+                                index: indexReplaced,
+                                wiki: wikiResult,
+                            };
                             res.writeHead(200, { "Content-Type": "application/json" });
-                            res.end(JSON.stringify({ ok: true, replaced: updated.replaced }));
-                            log(`POST /note/speaker -> 200 (${updated.replaced} lines: ` +
-                                `"${fromName}" -> "${toName}" in ${node.notePath})`);
+                            res.end(JSON.stringify(summary));
+                            log(`POST /note/speaker -> 200 ("${fromName}" -> "${toName}" | ` +
+                                `note=${noteReplaced} index=${indexReplaced} ` +
+                                `wiki=${wikiResult.filesUpdated}files,${wikiResult.peopleRenamed}renamed,${wikiResult.peopleMerged}merged,${wikiResult.replacements}repl)`);
                         }
                         catch (err) {
                             res.writeHead(500, { "Content-Type": "text/plain" });
                             res.end("Error updating note");
-                            log(`POST /note/speaker -> 500 (${node.notePath})`);
+                            log(`POST /note/speaker -> 500 (${node.notePath}): ${err instanceof Error ? err.message : String(err)}`);
                         }
                     })();
                 });
