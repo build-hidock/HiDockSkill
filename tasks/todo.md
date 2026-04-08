@@ -91,6 +91,22 @@
 - [x] Click-to-rename speaker labels in note modal — bulk update across all matching badges,
       persists to disk via POST /note/speaker, color stays stable across renames
 
+## Completed (2026-04-08)
+
+### Speaker Rename Feature — full identity migration
+- [x] Layered rename across the four storage locations: note transcript, note summary,
+      meeting index row, wiki (people page rename or merge + cross-reference rewrite +
+      master index regen + search index rebuild)
+- [x] Single-instance vs bulk modes via `lineStart` parameter on the backend helper
+- [x] Frontend modal-based mode selection (`Cancel · Just this line · All N lines`)
+      shown only when matchCount > 1 — explicit user choice instead of failed heuristics
+- [x] Color harmonization on rename: adopts target speaker's palette when merging,
+      assigns fresh palette index when introducing a novel name in single-line mode
+- [x] Per-row delete button on the list view (hover-only)
+- [x] readLimit truncation fix for large file downloads (was capped at ~8-32 MB)
+- [x] Sync state correctness: failed files are no longer marked as "processed"
+- [x] All 307 tests pass; modal flow verified live on the running watcher
+
 ## Future Work
 - [ ] Speaker enrollment (interface designed in `SpeakerProfile`/`SpeakerEnrollmentConfig`).
       Plan documented in `tasks/speaker-enrollment-plan.md` — needs update for moonshine-default world.
@@ -104,8 +120,7 @@
       the readLimit fix solved the most common cause but USB transfer reliability on huge
       files (>100 MB) is still a separate intermittent issue worth root-causing
 - [ ] Click-to-sync on pending device-file rows (currently no-op; future: enqueue manual sync)
-- [ ] Speaker rename → also update `Attendee:` line in meetingindex.md so renamed speakers
-      are searchable as attendees (currently only the transcript section is rewritten)
+- [ ] Surface speaker rename response counts as a small toast (e.g. "✓ Renamed 47 lines · 4 wiki pages updated")
 - [ ] Multi-device aware plug-in detection: track each connected HiDock by serial, fire a
       plug-in event for each NEW device (currently single-boolean — plugging P1 while H1E
       is already connected doesn't fire a fresh popup)

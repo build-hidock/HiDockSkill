@@ -4,3 +4,25 @@ meeting-storage/
 .env
 .DS_Store
 logs/
+
+# Python bytecode caches (e.g., scripts/moonshine_transcribe.py imports)
+__pycache__/
+*.pyc
+
+# Stale TypeScript outputs from the base tsconfig.json (which has rootDir=".")
+# The real build (tsconfig.build.json with rootDir="src") emits to dist/<file>
+# directly, so anything under dist/src/ or dist/tests/ is leftover from a
+# typecheck or vitest pass that wrote to disk. Defense in case it regenerates.
+dist/src/
+dist/tests/
+
+# Local-only test fixtures — large audio + scratch transcript outputs that
+# the user keeps for ad-hoc testing but should never enter the repo (some
+# are >30MB; tests/steve_transcript_moonshine.md is the one committed
+# reference output, the rest are scratch).
+tests/*.mp3
+tests/*.wav
+tests/summary.md
+tests/transcript.md
+tests/steve_summary.md
+tests/steve_transcript.md
