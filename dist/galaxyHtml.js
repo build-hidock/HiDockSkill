@@ -2395,25 +2395,37 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     // ---------- Inline speaker rename — TWO MODES ----------
     //
     // Speaker labels are click-to-edit. There are two distinct user intents
-    // when editing a label, and the UI must support both:
+    // when editing a label:
     //
-    //   1. BULK RENAME ("this speaker is Sean")
-    //      User wants to give a diarized speaker a real name. All instances
-    //      of the old name → new name. Format stays the same (it's the same
-    //      person, just relabeled).
+    //   1. BULK RENAME ("this diarizer cluster is Sean")
+    //      The label is still a provisional diarizer label (Speaker 0,
+    //      Speaker 1, ...). User is identifying who that cluster is. All
+    //      instances of the old name should become the new name.
     //
-    //   2. SINGLE-LINE FIX ("this sentence was misdiarized")
-    //      User wants to reassign one specific line to a different (usually
-    //      existing) speaker. Only the clicked line updates. Format adopts
-    //      the existing target speaker's color.
+    //   2. SINGLE-LINE FIX ("this one sentence was misdiarized")
+    //      The label is already a recognized name (Lex Fridman, ...). The
+    //      diarizer occasionally clustered noise/ads/another voice into the
+    //      same identity. User wants to fix ONE line without disturbing the
+    //      other (correct) lines for that recognized speaker.
     //
-    // Mode is selected via a HEURISTIC (with explicit override):
-    //   - New name is NOVEL  → BULK   (typical "give a name" case)
-    //   - New name is EXISTING → SINGLE (typical "fix one mistake" case)
-    //   - Shift+Enter         → ALWAYS BULK (force-merge two speakers)
+    // Mode selection — heuristic + explicit override:
     //
-    // The hint text below the input tells the user which mode the current
-    // input will trigger so the behavior is discoverable.
+    //   default mode is determined by the OLD name:
+    //     - oldName matches /^Speaker \d+$/  → BULK   (provisional cluster)
+    //     - oldName is anything else         → SINGLE (recognized name)
+    //
+    //   Shift+Enter INVERTS the default in either direction.
+    //
+    // Why old-name based, not new-name based?
+    //   The original "novel name → bulk" heuristic broke for the case where
+    //   you have a recognized speaker like "Lex Fridman" and the diarizer
+    //   clustered an ad voice into the same identity. Renaming ONE ad line
+    //   to "Ads Girl" (a novel name) would have rebrand-bulked all of Lex's
+    //   real lines too. The right discriminator is "is the source label
+    //   provisional or committed", not "is the target name novel".
+    //
+    // The hint text below the input shows the current default + override so
+    // the behavior is discoverable.
     //
     // Esc cancels without saving.
     var _speakerRenameNoteId = null;
@@ -2430,17 +2442,30 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         beginSpeakerEdit(target);
       });
     }
+    // True if a label string looks like a provisional diarizer cluster
+    // (e.g. "Speaker 0", "Speaker 12"). The user has not yet identified who
+    // this cluster is, so editing should default to BULK rename ("this
+    // cluster is Sean"). Recognized names default to SINGLE-line fix.
+    function isProvisionalSpeakerLabel(name) {
+      return /^Speaker \d+$/.test(String(name || "").trim());
+    }
+
     function beginSpeakerEdit(labelEl) {
       var oldName = labelEl.getAttribute("data-speaker") || labelEl.textContent || "";
       var inlineStyle = labelEl.getAttribute("style") || "";
       labelEl.dataset.editing = "1";
 
       // The transcript line containing this label carries data-start with the
-      // segment timestamp. We need this to identify the line in SINGLE mode.
+      // segment timestamp. Needed to identify the line in SINGLE mode.
       var lineEl = labelEl.closest(".transcript-line");
       var lineStart = lineEl ? lineEl.getAttribute("data-start") : null;
 
-      // Container that holds both the input AND the hint text below it
+      // Compute the default mode + match count once at edit start. The hint
+      // text doesn't change as the user types because the default depends on
+      // the OLD name (the click target), not on what they type.
+      var defaultMode = isProvisionalSpeakerLabel(oldName) ? "bulk" : "single";
+      var matchCount = countSpeakerLabels(oldName);
+
       var wrap = document.createElement("span");
       wrap.className = "speaker-edit-wrap";
       wrap.style.display = "inline-flex";
@@ -2460,6 +2485,21 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
 
       var hint = document.createElement("span");
       hint.className = "speaker-edit-hint";
+      // Static hint that explains both gestures, anchored to the default mode
+      // for the current click target.
+      var lineWord = matchCount === 1 ? "line" : "lines";
+      if (defaultMode === "bulk") {
+        // Provisional cluster → default = rename all instances
+        hint.textContent =
+          "↵ rename all " + matchCount + " " + lineWord +
+          (matchCount > 1 ? " · ⇧↵ just this line" : "");
+      } else {
+        // Recognized name → default = fix this one line
+        hint.textContent =
+          "↵ just this line" +
+          (matchCount > 1 ? " · ⇧↵ rename all " + matchCount + " " + lineWord : "");
+      }
+
       wrap.appendChild(input);
       wrap.appendChild(hint);
 
@@ -2468,29 +2508,8 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       input.focus();
       input.select();
 
-      // Keep the hint text live as the user types so the mode is visible.
-      function refreshHint() {
-        var typed = (input.value || "").trim();
-        if (!typed || typed === oldName) {
-          hint.textContent = "Enter to save, Esc to cancel";
-          return;
-        }
-        var collidesWith = findExistingSpeakerLabel(typed);
-        if (collidesWith) {
-          // Existing speaker — single-line fix is the safer default.
-          hint.textContent =
-            "↵ fix this line · ⇧↵ merge all into " + typed;
-        } else {
-          // Novel name — bulk rename is the natural action.
-          var count = countSpeakerLabels(oldName);
-          hint.textContent = "↵ rename all " + count + " line" + (count === 1 ? "" : "s");
-        }
-      }
-      input.addEventListener("input", refreshHint);
-      refreshHint();
-
       var done = false;
-      function finish(commit, forceBulk) {
+      function finish(commit, shiftPressed) {
         if (done) return;
         done = true;
         var newName = (input.value || "").trim();
@@ -2500,18 +2519,21 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
           return;
         }
 
-        // Decide mode: explicit override → bulk; else heuristic.
-        var existingMatch = findExistingSpeakerLabel(newName);
-        var mode;
-        if (forceBulk) {
-          mode = "bulk";
-        } else if (existingMatch) {
+        // Mode selection:
+        //   defaultMode based on OLD name (provisional vs recognized)
+        //   Shift+Enter INVERTS the default
+        var mode = defaultMode;
+        if (shiftPressed) {
+          mode = mode === "bulk" ? "single" : "bulk";
+        }
+        // Edge case: bulk mode is meaningless if there's only one matching
+        // label. Collapse it to single — the result is the same and the
+        // backend doesn't need to walk the wiki/index.
+        if (mode === "bulk" && matchCount <= 1) {
           mode = "single";
-        } else {
-          mode = "bulk";
         }
 
-        // Restore the original label so applySpeakerRenameLocally can find it.
+        // Restore the original label so the local renamer can find it.
         parent.replaceChild(labelEl, wrap);
         delete labelEl.dataset.editing;
 
@@ -2521,7 +2543,6 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
           applySpeakerRenameBulk(oldName, newName);
         }
 
-        // Persist to disk via the server endpoint.
         if (_speakerRenameNoteId) {
           var body = { from: oldName, to: newName };
           if (mode === "single" && lineStart !== null) {
@@ -2592,16 +2613,26 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     }
 
     // SINGLE-line fix: update only the clicked label. The format MUST adopt
-    // the new identity's color, otherwise the user sees a label that says
-    // the new name but still has the old speaker's color (which is exactly
-    // the bug the user reported).
+    // the new identity's color so the line no longer carries the previous
+    // speaker's name AND format. Two sub-cases:
+    //
+    //   a) New name MATCHES an existing speaker in this transcript
+    //      (e.g. "this Lex Fridman line is actually Jensen Huang") →
+    //      copy that existing speaker's inline style. Visual merge.
+    //
+    //   b) New name is NOVEL — no existing speaker has it
+    //      (e.g. "this Lex Fridman line is actually an Ads Girl") →
+    //      assign a FRESH palette color from the next available slot so
+    //      the line is visually distinct from every other speaker.
+    //
+    // The style is computed BEFORE mutating data-speaker so the distinct-
+    // count math doesn't include the about-to-be-added new name.
     function applySpeakerRenameSingle(labelEl, oldName, newName) {
       var transcriptEl = document.getElementById("nm-transcript");
       if (!transcriptEl) return;
-      // The new name necessarily exists in the transcript here (otherwise the
-      // mode would be bulk), so we can safely pull a style from any sibling
-      // label of the new identity. Skip labelEl itself in case it has already
-      // been mutated (defensive — labelEl shouldn't match yet).
+
+      // Look for an existing label with the new name (skip the one we're
+      // about to mutate — it still carries the old name at this point).
       var existing = null;
       var candidates = transcriptEl.querySelectorAll(
         '.speaker-label[data-speaker="' + cssEscape(newName) + '"]'
@@ -2612,11 +2643,35 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
           break;
         }
       }
+
+      var newStyle;
+      if (existing) {
+        // Sub-case (a): visual merge into existing speaker.
+        newStyle = existing.getAttribute("style") || "";
+      } else {
+        // Sub-case (b): novel — assign a fresh palette slot. Count distinct
+        // existing speaker names BEFORE mutating, then use that count as
+        // the next palette index (zero-based).
+        newStyle = freshSpeakerStyle(transcriptEl);
+      }
+
       labelEl.textContent = newName;
       labelEl.setAttribute("data-speaker", newName);
-      if (existing) {
-        labelEl.setAttribute("style", existing.getAttribute("style") || "");
-      }
+      labelEl.setAttribute("style", newStyle);
+    }
+
+    // Compute the next fresh speaker style by counting distinct data-speaker
+    // values currently in the transcript and using that count as the next
+    // palette index. Cycles through SPEAKER_PALETTE if the transcript has
+    // more speakers than colors.
+    function freshSpeakerStyle(transcriptEl) {
+      var seen = {};
+      var labels = transcriptEl.querySelectorAll(".speaker-label[data-speaker]");
+      labels.forEach(function(el) {
+        seen[el.getAttribute("data-speaker")] = true;
+      });
+      var nextIdx = Object.keys(seen).length;
+      return speakerStyle(nextIdx);
     }
 
     // Minimal CSS attribute selector escape — handles backslash and quote.
