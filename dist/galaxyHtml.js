@@ -778,6 +778,99 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     pointer-events: none;
     white-space: nowrap;
   }
+  /* ---------- rename scope confirm dialog ---------- */
+  /* Mirrors #delete-confirm-overlay; same visual treatment, three buttons. */
+  #rename-scope-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(5, 0, 15, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 400;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  #rename-scope-overlay.open { display: flex; opacity: 1; }
+  .rename-scope-box {
+    width: 440px;
+    max-width: 90vw;
+    background: linear-gradient(165deg, #1a0a2e 0%, #0d0117 100%);
+    border: 1px solid rgba(168,85,247,0.30);
+    border-radius: 14px;
+    padding: 28px 24px 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(168,85,247,0.08);
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+    text-align: center;
+  }
+  #rename-scope-overlay.open .rename-scope-box { transform: scale(1); }
+  .rename-scope-icon {
+    font-size: 28px;
+    margin-bottom: 12px;
+    opacity: 0.85;
+  }
+  .rename-scope-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+  .rename-scope-names {
+    font-size: 13px;
+    color: var(--purple-lighter);
+    background: rgba(168,85,247,0.08);
+    border: 1px solid rgba(168,85,247,0.12);
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin: 12px 0 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rename-scope-names .arrow {
+    color: var(--text-dim);
+    margin: 0 6px;
+  }
+  .rename-scope-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+  .rename-scope-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .rename-scope-actions button {
+    height: 36px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0 18px;
+    transition: all 0.15s;
+  }
+  .btn-rename-this {
+    border: 1px solid rgba(168,85,247,0.40);
+    background: rgba(168,85,247,0.10);
+    color: var(--purple-lighter);
+  }
+  .btn-rename-this:hover {
+    background: rgba(168,85,247,0.18);
+    color: var(--text-primary);
+  }
+  .btn-rename-all {
+    border: 1px solid #a855f7;
+    background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-rename-all:hover {
+    background: linear-gradient(135deg, #b466fa 0%, #8b3fef 100%);
+  }
   .note-loading-text {
     color: var(--text-dim);
     font-style: italic;
@@ -1504,6 +1597,25 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
     <div class="delete-confirm-actions">
       <button class="btn-cancel" id="dc-cancel">Cancel</button>
       <button class="btn-delete-confirm" id="dc-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Speaker rename scope confirmation. Shown when the user renames a speaker
+     who has more than one matching line in the transcript, asking whether to
+     change just the clicked line or all matching lines. -->
+<div id="rename-scope-overlay">
+  <div class="rename-scope-box">
+    <div class="rename-scope-icon">&#x270f;&#xfe0f;</div>
+    <div class="rename-scope-title">Rename which lines?</div>
+    <div class="rename-scope-names">
+      <span id="rs-from"></span><span class="arrow">&rarr;</span><span id="rs-to"></span>
+    </div>
+    <div class="rename-scope-desc" id="rs-desc"></div>
+    <div class="rename-scope-actions">
+      <button class="btn-cancel" id="rs-cancel">Cancel</button>
+      <button class="btn-rename-this" id="rs-this">Just this line</button>
+      <button class="btn-rename-all" id="rs-all">All <span id="rs-all-count">N</span> lines</button>
     </div>
   </div>
 </div>
@@ -2392,42 +2504,24 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         .replace(/</g, "&lt;");
     }
 
-    // ---------- Inline speaker rename — TWO MODES ----------
+    // ---------- Inline speaker rename ----------
     //
-    // Speaker labels are click-to-edit. There are two distinct user intents
-    // when editing a label:
+    // Speaker labels are click-to-edit. The mode (single line vs all matches)
+    // is decided by an EXPLICIT user choice when there is real ambiguity:
     //
-    //   1. BULK RENAME ("this diarizer cluster is Sean")
-    //      The label is still a provisional diarizer label (Speaker 0,
-    //      Speaker 1, ...). User is identifying who that cluster is. All
-    //      instances of the old name should become the new name.
+    //   - matchCount = 1  → no ambiguity, just commit (single == bulk for one
+    //                       line, but we send a bulk request so the summary,
+    //                       index and wiki are kept in sync for that speaker)
+    //   - matchCount > 1  → modal popup with three buttons:
+    //                         "Cancel" / "Just this line" / "All N lines"
     //
-    //   2. SINGLE-LINE FIX ("this one sentence was misdiarized")
-    //      The label is already a recognized name (Lex Fridman, ...). The
-    //      diarizer occasionally clustered noise/ads/another voice into the
-    //      same identity. User wants to fix ONE line without disturbing the
-    //      other (correct) lines for that recognized speaker.
+    // Why a modal instead of a heuristic? Heuristics fail on real-world cases
+    // like a Lex Fridman + Jensen Huang interview where ad audio gets
+    // misclustered into Lex's identity — renaming one ad line to "Ads Girl"
+    // should NOT rebrand all of Lex's real lines. The user knows their intent
+    // better than any heuristic, so we ask.
     //
-    // Mode selection — heuristic + explicit override:
-    //
-    //   default mode is determined by the OLD name:
-    //     - oldName matches /^Speaker \d+$/  → BULK   (provisional cluster)
-    //     - oldName is anything else         → SINGLE (recognized name)
-    //
-    //   Shift+Enter INVERTS the default in either direction.
-    //
-    // Why old-name based, not new-name based?
-    //   The original "novel name → bulk" heuristic broke for the case where
-    //   you have a recognized speaker like "Lex Fridman" and the diarizer
-    //   clustered an ad voice into the same identity. Renaming ONE ad line
-    //   to "Ads Girl" (a novel name) would have rebrand-bulked all of Lex's
-    //   real lines too. The right discriminator is "is the source label
-    //   provisional or committed", not "is the target name novel".
-    //
-    // The hint text below the input shows the current default + override so
-    // the behavior is discoverable.
-    //
-    // Esc cancels without saving.
+    // Esc cancels at any phase.
     var _speakerRenameNoteId = null;
     function setActiveNoteForRename(id) {
       _speakerRenameNoteId = id;
@@ -2442,13 +2536,6 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         beginSpeakerEdit(target);
       });
     }
-    // True if a label string looks like a provisional diarizer cluster
-    // (e.g. "Speaker 0", "Speaker 12"). The user has not yet identified who
-    // this cluster is, so editing should default to BULK rename ("this
-    // cluster is Sean"). Recognized names default to SINGLE-line fix.
-    function isProvisionalSpeakerLabel(name) {
-      return /^Speaker \d+$/.test(String(name || "").trim());
-    }
 
     function beginSpeakerEdit(labelEl) {
       var oldName = labelEl.getAttribute("data-speaker") || labelEl.textContent || "";
@@ -2459,13 +2546,11 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       // segment timestamp. Needed to identify the line in SINGLE mode.
       var lineEl = labelEl.closest(".transcript-line");
       var lineStart = lineEl ? lineEl.getAttribute("data-start") : null;
-
-      // Compute the default mode + match count once at edit start. The hint
-      // text doesn't change as the user types because the default depends on
-      // the OLD name (the click target), not on what they type.
-      var defaultMode = isProvisionalSpeakerLabel(oldName) ? "bulk" : "single";
       var matchCount = countSpeakerLabels(oldName);
 
+      // Wrap the input + a small hint in an inline-flex column. Hint is just
+      // the simple "Enter to save · Esc to cancel" text since the actual
+      // mode choice happens in the modal popup, not inline.
       var wrap = document.createElement("span");
       wrap.className = "speaker-edit-wrap";
       wrap.style.display = "inline-flex";
@@ -2485,20 +2570,7 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
 
       var hint = document.createElement("span");
       hint.className = "speaker-edit-hint";
-      // Static hint that explains both gestures, anchored to the default mode
-      // for the current click target.
-      var lineWord = matchCount === 1 ? "line" : "lines";
-      if (defaultMode === "bulk") {
-        // Provisional cluster → default = rename all instances
-        hint.textContent =
-          "↵ rename all " + matchCount + " " + lineWord +
-          (matchCount > 1 ? " · ⇧↵ just this line" : "");
-      } else {
-        // Recognized name → default = fix this one line
-        hint.textContent =
-          "↵ just this line" +
-          (matchCount > 1 ? " · ⇧↵ rename all " + matchCount + " " + lineWord : "");
-      }
+      hint.textContent = "↵ save · esc cancel";
 
       wrap.appendChild(input);
       wrap.appendChild(hint);
@@ -2508,34 +2580,31 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
       input.focus();
       input.select();
 
-      var done = false;
-      function finish(commit, shiftPressed) {
-        if (done) return;
-        done = true;
-        var newName = (input.value || "").trim();
-        if (!commit || !newName || newName === oldName) {
+      // Use a phase machine so blur/keydown handlers can route to the right
+      // action without trampling each other:
+      //   editing    — input is focused, user is typing
+      //   confirming — modal popup is visible, awaiting button click
+      //   done       — committed or cancelled, no further action
+      var phase = "editing";
+
+      function cancel() {
+        if (phase === "done") return;
+        phase = "done";
+        if (wrap.parentNode === parent) {
           parent.replaceChild(labelEl, wrap);
-          delete labelEl.dataset.editing;
-          return;
         }
-
-        // Mode selection:
-        //   defaultMode based on OLD name (provisional vs recognized)
-        //   Shift+Enter INVERTS the default
-        var mode = defaultMode;
-        if (shiftPressed) {
-          mode = mode === "bulk" ? "single" : "bulk";
-        }
-        // Edge case: bulk mode is meaningless if there's only one matching
-        // label. Collapse it to single — the result is the same and the
-        // backend doesn't need to walk the wiki/index.
-        if (mode === "bulk" && matchCount <= 1) {
-          mode = "single";
-        }
-
-        // Restore the original label so the local renamer can find it.
-        parent.replaceChild(labelEl, wrap);
         delete labelEl.dataset.editing;
+        hideRenameScopeOverlay();
+      }
+
+      function commitMode(mode, newName) {
+        if (phase === "done") return;
+        phase = "done";
+        if (wrap.parentNode === parent) {
+          parent.replaceChild(labelEl, wrap);
+        }
+        delete labelEl.dataset.editing;
+        hideRenameScopeOverlay();
 
         if (mode === "single") {
           applySpeakerRenameSingle(labelEl, oldName, newName);
@@ -2556,17 +2625,129 @@ export function renderGalaxyHtml(data, wikiIndexContent) {
         }
       }
 
-      input.addEventListener("blur", function() { finish(true, false); });
+      function tryCommit() {
+        if (phase !== "editing") return;
+        var newName = (input.value || "").trim();
+        if (!newName || newName === oldName) {
+          cancel();
+          return;
+        }
+        if (matchCount <= 1) {
+          // No ambiguity. Bulk mode propagates to summary/index/wiki for this
+          // single-line speaker, which is the right behavior — naming a
+          // speaker who appears once should clean everything up.
+          commitMode("bulk", newName);
+          return;
+        }
+        // Ambiguous → modal popup. The popup's button handlers call
+        // commitMode or cancel.
+        phase = "confirming";
+        showRenameScopeOverlay(oldName, newName, matchCount, function(choice) {
+          if (choice === "single") {
+            commitMode("single", newName);
+          } else if (choice === "all") {
+            commitMode("bulk", newName);
+          } else {
+            // cancel
+            phase = "editing";
+            cancel();
+          }
+        });
+      }
+
+      input.addEventListener("blur", function() {
+        // Only commit on blur if we're still in the editing phase. Once the
+        // confirm modal is up, focus moves to the modal buttons and we don't
+        // want blur to commit prematurely.
+        if (phase === "editing") {
+          // Defer slightly so a click on a modal button (which steals focus)
+          // doesn't get pre-empted.
+          setTimeout(function() {
+            if (phase === "editing") tryCommit();
+          }, 0);
+        }
+      });
       input.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
           e.preventDefault();
-          finish(true, e.shiftKey === true);
+          tryCommit();
         } else if (e.key === "Escape") {
           e.preventDefault();
-          finish(false, false);
+          cancel();
         }
       });
     }
+
+    // ---------- Rename scope confirmation modal ----------
+    // Shows the "rename one or all" choice for ambiguous renames. Manages a
+    // single global handler set so multiple opens/closes don't leak listeners.
+    var _renameScopeCallback = null;
+    function showRenameScopeOverlay(fromName, toName, count, onChoice) {
+      _renameScopeCallback = onChoice;
+      var overlay = document.getElementById("rename-scope-overlay");
+      if (!overlay) {
+        // Defensive: if the markup is missing for some reason, fall back to
+        // the safer default (single-line fix) so we never bulk-mutate.
+        if (onChoice) onChoice("single");
+        return;
+      }
+      document.getElementById("rs-from").textContent = fromName;
+      document.getElementById("rs-to").textContent = toName;
+      document.getElementById("rs-all-count").textContent = String(count);
+      document.getElementById("rs-desc").textContent =
+        "There " + (count === 1 ? "is" : "are") + " " + count + " line" +
+        (count === 1 ? "" : "s") + ' currently labeled "' + fromName + '". ' +
+        'Change just the line you clicked, or every matching line?';
+      overlay.style.display = "flex";
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() { overlay.classList.add("open"); });
+      });
+      // Move focus into the modal so keyboard users can tab through buttons
+      var allBtn = document.getElementById("rs-all");
+      if (allBtn) allBtn.focus();
+    }
+
+    function hideRenameScopeOverlay() {
+      var overlay = document.getElementById("rename-scope-overlay");
+      if (!overlay) return;
+      overlay.classList.remove("open");
+      setTimeout(function() { overlay.style.display = "none"; }, 200);
+      _renameScopeCallback = null;
+    }
+
+    // Wire up the modal buttons once
+    (function wireRenameScopeModal() {
+      var thisBtn = document.getElementById("rs-this");
+      var allBtn = document.getElementById("rs-all");
+      var cancelBtn = document.getElementById("rs-cancel");
+      var overlay = document.getElementById("rename-scope-overlay");
+      if (!thisBtn || !allBtn || !cancelBtn || !overlay) return;
+      thisBtn.addEventListener("click", function() {
+        var cb = _renameScopeCallback;
+        if (cb) cb("single");
+      });
+      allBtn.addEventListener("click", function() {
+        var cb = _renameScopeCallback;
+        if (cb) cb("all");
+      });
+      cancelBtn.addEventListener("click", function() {
+        var cb = _renameScopeCallback;
+        if (cb) cb("cancel");
+      });
+      overlay.addEventListener("click", function(e) {
+        if (e.target === overlay) {
+          var cb = _renameScopeCallback;
+          if (cb) cb("cancel");
+        }
+      });
+      document.addEventListener("keydown", function(e) {
+        if (_renameScopeCallback && e.key === "Escape") {
+          e.preventDefault();
+          var cb = _renameScopeCallback;
+          if (cb) cb("cancel");
+        }
+      });
+    })();
 
     // Find the FIRST existing label in the transcript whose data-speaker
     // exactly matches the given name. Used to detect collisions for mode
