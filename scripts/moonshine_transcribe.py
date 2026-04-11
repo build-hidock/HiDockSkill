@@ -66,7 +66,13 @@ def normalize_lang(code: str) -> str:
 
 
 def detect_language(wav_path: str) -> tuple[str, float]:
-    """Detect language using faster-whisper tiny on the first 30s of audio.
+    """Detect language using faster-whisper base on the first 30s of audio.
+
+    Uses the `base` model (141M params) instead of `tiny` (39M params) because
+    tiny is unreliable for CJK languages — a Chinese recording was misdetected
+    as Spanish in production (2025Jun13-033147-Rec31.hda). Base is ~3.6× larger
+    but still runs in ~1-2s on CPU for a 30s LID window, which is acceptable
+    given that the full Moonshine transcription takes 15-130s anyway.
 
     Returns (lang_code, probability). Falls back to ("en", 0.0) on failure.
     """
@@ -77,10 +83,10 @@ def detect_language(wav_path: str) -> tuple[str, float]:
         sys.stderr.write(f"  warning: faster-whisper unavailable, defaulting to 'en' ({e})\n")
         return ("en", 0.0)
 
-    sys.stderr.write("  Detecting language (faster-whisper tiny)...\n")
+    sys.stderr.write("  Detecting language (faster-whisper base)...\n")
     t0 = time.time()
     try:
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        model = WhisperModel("base", device="cpu", compute_type="int8")
         audio = decode_audio(wav_path, sampling_rate=16000)
         # Whisper LID uses a 30s window; faster-whisper handles slicing internally.
         # Pass at most 30s explicitly to keep memory minimal.
